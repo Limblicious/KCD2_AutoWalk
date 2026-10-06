@@ -4,16 +4,17 @@ Native KCSE mod for **Kingdom Come: Deliverance II** intended to reuse the game'
 
 ## Target behavior
 
-- KCD2's native horse road-follow logic determines the road and desired travel direction.
-- Henry receives a full-strength on-foot movement vector along that direction.
+- KCD2's native horse road-follow logic determines the road and desired heading.
+- AutoWalk supplies sustained on-foot forward movement, equivalent in intent to holding `W`.
+- Road-follow steering corrects Henry's heading so he stays on the road.
 - Vanilla locomotion remains responsible for speed state:
   - Caps Lock: walk
   - normal: jog
   - Shift: sprint
-- Camera remains free.
+- KCD2's normal on-foot camera/facing relationship is left untouched. The mod does **not** create horse-style camera independence, preserve a fixed world-space camera heading, or synthesize camera-relative strafing.
 - Horse acceleration, collision avoidance, animation, and physics are not transplanted.
 
-This is not a W-key macro and not a custom road graph.
+This is not just a blind W-key macro and is not a custom road graph. The forward movement is simple; the road acquisition and steering are intended to come from KCD2's native road-follow system.
 
 ## Current status
 
@@ -22,7 +23,7 @@ This is not a W-key macro and not a custom road graph.
 The two remaining native seams before movement is enabled are:
 
 1. verify the direct road-sampler call contract currently associated with `sub_180A0A124`;
-2. verify the on-foot `C_PlayerInput` / `C_PlayerMovementAction` movement-vector injection point.
+2. verify the on-foot forward-input and heading/turn steering seam.
 
 ## Compatibility
 
@@ -92,7 +93,7 @@ The second command is a mounted-horse read-only probe for already mapped road-ma
 1. build/load verification;
 2. mounted road-magnetism observations;
 3. direct on-foot road sampling;
-4. on-foot movement-vector injection;
+4. on-foot forward-input + steering integration;
 5. toggle/cancel behavior;
 6. compatibility guards and release packaging;
 7. Steam Workshop testing only after KCSE Workshop plugin discovery is verified.
