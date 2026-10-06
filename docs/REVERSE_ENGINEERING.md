@@ -110,17 +110,24 @@ Before invoking `sub_180A0A124`:
 
 Never call the raw RVA.
 
-## Open item B — on-foot movement injection
+## Open item B — on-foot forward input and steering
 
-Locate the point where physical on-foot movement actions become Henry's normalized movement vector after control resolution but before locomotion consumes it.
+Find the least invasive on-foot seams that let AutoWalk:
+
+1. sustain ordinary forward movement, equivalent in intent to holding `W`; and
+2. apply the road-follow heading/turn correction to Henry.
+
+Do not solve this by creating a camera-relative movement vector or a horse-style independent camera mode.
 
 Acceptance:
 
-- camera remains free;
-- movement magnitude is normalized;
+- straight-line synthetic forward movement behaves like ordinary held forward input;
+- native road steering can turn Henry toward the road heading;
+- KCD2's normal on-foot camera/facing coupling remains untouched;
+- the mod does not directly rotate, lock, or decouple the camera;
 - Caps Lock and Shift remain vanilla;
 - stamina/collision/animation remain vanilla;
-- disabling cannot leave stuck movement.
+- disabling cannot leave stuck movement or steering state.
 
 ## Evidence standard
 
