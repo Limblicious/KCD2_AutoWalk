@@ -1,0 +1,105 @@
+{
+  "source": "Current public JerryYOJ/libKCD2 master; research seed only",
+  "target_family": "KCD2 WHGame.dll Steam 1.5.6",
+  "types": {
+    "S_AutoController": {
+      "size": "0x48",
+      "fields": {
+        "0x00": "I_MagnetismController vptr",
+        "0x08": "m_reserved08 : uint64",
+        "0x10": "m_reserved10 : uint64",
+        "0x18": "m_reserved18 : uint64",
+        "0x20": "m_path : std::vector<float> (0x18 bytes)",
+        "0x38": "m_pHorseData : S_HorseData*",
+        "0x40": "m_zero40 : int32",
+        "0x44": "m_flag44 : uint8"
+      }
+    },
+    "S_OnPressController": {
+      "size": "0x30",
+      "fields": {
+        "0x00": "I_MagnetismController vptr",
+        "0x08": "I_RiderPlayerStateMachineModifier secondary vptr",
+        "0x10": "m_pPlayer : C_Player*",
+        "0x18": "m_pHorseData : S_HorseData*",
+        "0x20": "m_deactivateTime : float (CVars+0x204)",
+        "0x24": "m_reactivateTime : float (CVars+0x208)",
+        "0x28": "m_hintTime : float",
+        "0x2C": "m_flags : uint8 (bit0 active, bit1 latched, bit3, bit4 flick)"
+      }
+    },
+    "S_HorseRoadFollow": {
+      "size": "0x80",
+      "fields": {
+        "0x00": "m_pHorseData : S_HorseData*",
+        "0x08": "m_stickUser : uint64",
+        "0x10": "m_stick : S_HorseFollowStick (0x20)",
+        "0x30": "m_pathA : std::vector<float>",
+        "0x48": "m_pathB : std::vector<float>",
+        "0x60": "m_latched : uint8",
+        "0x68": "m_pMagnetism : I_MagnetismController*",
+        "0x70": "m_mode : int32 (0 off / 1 on-press / 2 auto)",
+        "0x78": "m_reserved78 : uint64"
+      }
+    },
+    "S_HorseFollowStick": {
+      "size": "0x20",
+      "fields": {
+        "0x00": "m_stick : Vec2",
+        "0x08": "m_delta : float",
+        "0x0C": "m_negOne : float (-1.0)",
+        "0x10": "m_zero10 : int32",
+        "0x18": "m_pUser : uint64* -> S_HorseRoadFollow+0x08"
+      }
+    },
+    "S_HorseMagnetismSample": {
+      "size": "0x38",
+      "fields": {
+        "0x00": "m_hit : Vec3",
+        "0x0C": "m_along : Vec3",
+        "0x18": "m_pFrom : S_HorseRoadPoint*",
+        "0x20": "m_pTo : S_HorseRoadPoint*",
+        "0x28": "m_yawFrom : float",
+        "0x2C": "m_yawTo : float",
+        "0x30": "m_hasHit : uint8",
+        "0x31": "m_failed : uint8"
+      }
+    },
+    "S_HorseData_relevant": {
+      "size": "0x4C8",
+      "fields": {
+        "0xF8": "m_pHorse : C_Horse*",
+        "0x100": "m_pMove : I_HorseMoveAdapter* / C_RiderPlayerInput",
+        "0x110": "m_pseudoSpeed : float",
+        "0x114": "m_prevPseudoSpeed : float",
+        "0x118": "m_speed : float",
+        "0x124": "m_backwards : bool",
+        "0x125": "m_fastSlowDown : bool",
+        "0x128": "m_yawSmoothed : float (SmoothCD state; NOT world heading)",
+        "0x12C": "m_yawVel : float",
+        "0x130": "m_magnetYaw : float (raw yaw command)",
+        "0x138": "m_magnetismLive : bool",
+        "0x13C": "m_magnetHit : Vec3",
+        "0x158": "m_roadFollow : S_HorseRoadFollow"
+      }
+    },
+    "C_ActorPhysicsState": {
+      "size": "0x98",
+      "fields": {
+        "0x00": "m_pOwner : C_Actor*",
+        "0x08": "m_lookAngles : Ang3",
+        "0x14": "m_lookQuat : Quat",
+        "0x24": "m_viewRotation : Quat",
+        "0x34": "m_flatYawQuat : Quat",
+        "0x44": "m_flatYaw : float",
+        "0x48": "m_viewPitch : float",
+        "0x4C": "m_lookDeltaTransient : Ang3",
+        "0x58": "m_lookDeltaPending : Ang3",
+        "0x64": "m_lookDeltaCarried : Ang3",
+        "0x7C": "m_lookDeltaRequest : Ang3 (mouse-look request)",
+        "0x88": "m_lookAngleAccum : Ang3 (horse glue/centering additive)",
+        "0x94": "m_lookClamped : bool"
+      }
+    }
+  }
+}
