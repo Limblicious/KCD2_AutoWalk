@@ -47,9 +47,32 @@ Correlate `magnetismLive`, mode, yaw, and hit values with visible behavior.
 
 Before movement mutation, prove road acquisition from Henry's on-foot position on the same test roads.
 
-## 5. Movement seam — future
+## 5. On-foot forward input and steering — future
 
-Inject known world headings with camera at aligned, ±90°, and 180°. Verify free camera, native walk/jog/sprint, stamina, collision, and clean disable.
+First test synthetic forward input without road following:
+
+- standing on level ground;
+- walk mode;
+- jog;
+- sprint;
+- collision;
+- stairs/slope;
+- enable/disable repeatedly.
+
+Pass: behavior matches ordinary held forward input and never leaves stuck movement.
+
+Then test steering separately:
+
+- small left/right heading corrections;
+- shallow curve;
+- sharp curve;
+- stop steering and verify normal control returns.
+
+Pass:
+
+- Henry turns through the chosen on-foot heading/turn seam;
+- KCD2's normal camera/facing relationship behaves as it does during ordinary on-foot turning;
+- AutoWalk contains no camera lock, camera decoupling, world-space camera preservation, or camera-relative strafe workaround.
 
 ## 6. Integrated follow — future
 
