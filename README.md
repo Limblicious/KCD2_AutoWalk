@@ -104,6 +104,33 @@ KingdomComeDeliverance2/
             └─ KCD2_AutoWalk.dll
 ```
 
+## Next game-PC task
+
+Do **not** continue tuning the current prototype follower.
+
+On the game PC:
+
+```powershell
+git pull --ff-only
+.\scripts\prepare-re.ps1
+```
+
+Then follow:
+
+- `docs/RE_WORKSTATION.md`
+- `docs/OPENCODE_RE_TASK.md`
+- `docs/DECOMPILATION_PLAN.md`
+
+The repo already contains:
+
+- `re/seed_manifest.json` — known functions, REL IDs, vtables, RTTI, and vanilla road-chooser anchors;
+- `re/type_layouts.json` — mapped controller/view-state layouts;
+- `re/horse_cvars.json` — named road-magnetism/steering/camera CVar offsets;
+- `re/ida_apply_seeds.py` — applies known names to the IDB;
+- `re/ida_dump_vtables.py` — dumps concrete vtable slot targets for the native controllers.
+
+The goal of the first local session is to decompile the actual `S_AutoController` and `S_HorseRoadFollow` implementation, not to modify Henry's movement.
+
 ## Reverse-engineering direction
 
 The preferred local workflow is **IDA + Hex-Rays decompiler + an MCP bridge/server connected to the workstation agent**, using a local working copy of `WHGame.dll` and an IDB that is never committed.
