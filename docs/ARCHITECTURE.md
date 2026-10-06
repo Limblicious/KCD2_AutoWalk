@@ -1,216 +1,122 @@
 # Architecture
 
-## Product behavior
+## Core principle
 
-The target is not merely "walk Henry toward a sampled road tangent."
+The final mod should not imitate KCD2 horse road following.
 
-The target is:
+It should **recover the actual mounted controller and adapt its output to Henry**.
 
-> **Mounted KCD2 road-follow behavior, translated to Henry's on-foot locomotion and camera.**
+The current experimental follower only proves that native roads can be queried, forward input can be synthesized, and Henry can be turned programmatically. Its custom steering is not an architectural foundation.
 
-## Target state machine
+## Source of truth
 
-```text
-                         on foot, near road
-                                |
-                           hold E
-                                |
-                                v
-                    native follow acquisition
-                                |
-                                v
-                      FOLLOW LATCHED / ACTIVE
-                                |
-            +-------------------+-------------------+
-            |                                       |
-        WASD neutral                           WASD active
-            |                                       |
-            v                                       v
- native road controller                    manual movement
- owns travel heading                       owns travel direction
-            |                                       |
- Henry auto-forward                        normal camera-relative
-            |                              on-foot movement
-            |                                       |
- camera free-look                          camera behaves normally
- mounted-style limits                      for manual movement
-            |                                       |
-            +-------------------+-------------------+
-                                |
-                    native magnetism decides
-                     whether latch survives
-                                |
-                    +-----------+-----------+
-                    |                       |
-                 survives                disengages
-                    |                       |
-          release WASD resumes      remain manual until
-             native follow             E held again
-```
+For mounted road-follow behavior, the source of truth is the decompiled `WHGame.dll` implementation.
 
-## Critical separation: travel frame vs view frame
+Not video, manually sampled telemetry, guessed constants, hand-tuned control laws, or intuition about what the horse seems to do.
 
-During autonomous follow, Henry needs two orientations:
+Runtime instrumentation is used only to validate the decompiler reconstruction.
 
-1. **travel/body frame** — driven by the native road-follow controller;
-2. **view/camera frame** — driven by mouse look within mounted-style limits.
-
-The current experimental implementation incorrectly uses mouse X to rotate the camera so Henry's on-foot forward vector points down the road. That couples the two frames and causes the forced camera whipping.
-
-The replacement implementation must not use camera rotation as the steering actuator.
-
-## Native mounted pipeline to recover
-
-Existing public RE already establishes:
+## Target native pipeline
 
 ```text
-C_RiderPlayerInput
-    m_move
-    m_turn
-    m_stickMag
-
-S_HorseData
-    m_pseudoSpeed
-    m_magnetYaw
-    m_yawSmoothed
-    m_yawVel
-    m_magnetismLive
-    m_magnetHit
-    m_roadFollow
-
-S_HorseRoadFollow
-    m_stick
-    m_pathA
-    m_pathB
-    m_latched
-    m_pMagnetism
-    m_mode
-
+rider input / hold-E state
+          |
+          v
+S_HorseRoadFollow::Tick
+          |
+          +--> road query / sample
+          |
+          v
 I_MagnetismController
-    SetHoldLatched()
-    Tick(sample, phase, dt)
-    GetRoadDistance()
-
-S_AutoController
-    persistent path/state
-    Tick(...) through I_MagnetismController
+          |
+          +--> S_OnPressController
+          |          or
+          +--> S_AutoController
+                     |
+                     v
+       persistent road/path state
+                     |
+                     v
+            desired magnet yaw
+                     |
+                     v
+          native yaw smoothing
+                     |
+                     v
+            horse turn request
 ```
 
-The CVar surface shows that vanilla includes logic for:
+Every branch between those boxes is to be decompiled before the final on-foot controller is designed.
 
-- enter/remain angles;
-- interrupt timing;
-- acquire/deactivate distances;
-- crossroad prediction;
-- backtrack path length;
-- path-width scoring;
-- snap timing;
-- trend steering and width weighting;
-- flick handling;
-- speed-dependent maximum steering.
+## Dismounted adaptation boundary
 
-These behaviors should come from the game, not from new AutoWalk constants.
-
-## Camera pipeline to recover
-
-Current libKCD2 RE identifies:
-
-- `C_CameraRider::Compose` — mounted camera compose, REL 434788;
-- `C_CameraFirstPerson::Compose` — on-foot first-person compose, REL 51045;
-- `C_ActorPhysicsState` look-angle integrator and view-limit clamp;
-- horse flat-yaw → rider `m_lookAngleAccum` glue — REL 37998;
-- mounted camera centering — REL 56442;
-- horse CVars:
-  - `wh_horse_ViewLimitWide`;
-  - `wh_horse_ViewLimitNarrow`;
-  - `wh_horse_ViewLimitBottom`;
-  - `wh_horse_CameraCentering*`;
-  - `wh_horse_CameraCenteringMagnetismDegreeLimit`.
-
-The exact mounted limit setup/selection must be recovered rather than approximated with guessed angles.
-
-## Dismounted adapter goal
-
-Preferred architecture:
+Preferred end state:
 
 ```text
-Henry IEntity position/orientation/velocity
-                |
-                v
-      synthetic/adapted horse state
-                |
-                v
-      REAL S_HorseRoadFollow
-                |
-                v
-       REAL S_AutoController
-                |
-                v
-     native desired road steering
-                |
-                v
-       DISMOUNTED TRAVEL ADAPTER
-                |
-        Henry body/travel heading
-                |
-         on-foot locomotion
+Henry pose / speed / manual input
+             |
+             v
+ adapter satisfying native controller inputs
+             |
+             v
+ original recovered road-follow state machine
+             |
+             v
+      native desired travel heading
+             |
+             v
+ Henry body/travel-direction actuator
+             |
+             v
+       normal human locomotion
 ```
 
-Parallel camera path while WASD-neutral:
+If the original controller can execute directly against a synthetic `S_HorseData`/road-follow facade, prefer that.
 
-```text
-mouse input
-    |
-    v
-Henry view state
-    |
-mounted-equivalent yaw/pitch limits
-    |
-free look independent of body/travel heading
-```
+If a portion cannot execute safely, translate the decompiled logic branch-for-branch rather than inventing a substitute.
 
-When WASD becomes non-neutral, bypass the autonomous travel adapter and let normal on-foot movement own travel direction. Do not automatically destroy the native magnetism state.
+## Camera architecture
 
-## Engagement
+The same decompiler-first rule applies to camera behavior.
 
-The desired UX is the vanilla horseback interaction:
+Recover:
 
-- hold E near a suitable road;
-- native-style acquisition/latching;
-- release E after engagement;
-- following persists until native disengagement conditions are met.
+- `C_CameraRider::Compose`;
+- comparison with `C_CameraFirstPerson::Compose`;
+- horse-yaw -> rider look accumulator glue;
+- view-limit channel installation/reference frame;
+- mounted camera centering;
+- any magnetism-specific camera behavior.
 
-If possible, reuse the same mounted input action/state-machine logic rather than implementing an arbitrary new timer.
+The target autonomous state has separate Henry body/travel orientation and player view orientation. The camera is not the steering actuator.
 
-## Reuse boundary
+## Manual input architecture
 
-Reuse/translate:
+Recover exactly how rider `m_move`, `m_turn`, `m_stickMag`, follow-stick state, interruption timers, and controller latch interact.
 
-- road acquisition;
-- controller state;
-- road/path candidate progression;
-- fork behavior;
-- path trend and width logic;
-- steering output;
-- manual-input interruption behavior;
-- camera limit semantics.
+Then reproduce the same ownership transition on foot:
 
-Do not transplant:
+- manual input takes immediate control;
+- native controller state either survives or deactivates according to its own logic;
+- release of WASD permits resume only when that native state survives.
 
-- horse gait/acceleration;
-- horse collision avoidance;
-- horse jump/slope physics;
-- horse animations/body geometry.
+## Hold-E engagement
 
-## Development phases
+Recover the native mounted activation path from input binding to latch.
 
-1. preserve the current prototype as a diagnostic baseline;
-2. decompile and type the complete `S_HorseRoadFollow::Tick` + `S_AutoController` path;
-3. decompile E-hold activation/latching and rider-WASD interruption;
-4. decompile mounted camera compose/view-limit installation;
-5. implement a native-controller synthetic facade;
-6. implement a Henry travel/body actuator independent of camera yaw;
-7. implement mounted-equivalent view limits while autonomous;
-8. integrate manual WASD handoff/resume;
-9. compare frame-by-frame against mounted vanilla behavior;
-10. compatibility/release hardening.
+Do not invent a custom hold timer unless the native path truly cannot be reused.
+
+## Development order
+
+1. decompile all functions listed in `docs/DECOMPILATION_PLAN.md`;
+2. type/name the full road-follow state machine;
+3. recover exact manual-input interruption behavior;
+4. recover exact rider-camera behavior;
+5. determine the minimum synthetic horse facade required;
+6. execute native controller against the facade if safe;
+7. otherwise translate only the irreducible native logic;
+8. implement Henry travel/body actuator;
+9. implement mounted-equivalent camera decoupling/limits;
+10. perform full-rate differential runtime validation.
+
+No additional tuning of the prototype controller should occur before steps 1-4 are complete.
