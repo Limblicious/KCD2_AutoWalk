@@ -4,7 +4,7 @@ Treat the KCD2 installation as production data.
 
 ## Objective
 
-Implement on-foot road following by reusing KCD2's native horse road-magnetism/path-follow logic for road acquisition and steering while preserving Henry's native locomotion, gait, stamina, collision, animation, and camera behavior.
+Implement on-foot road following by reusing KCD2's native horse road-magnetism/path-follow logic for road acquisition and steering while preserving Henry's native locomotion, gait, stamina, collision, animation, and normal on-foot camera/facing behavior.
 
 ## Never
 
@@ -41,7 +41,9 @@ Reuse native road acquisition, road segment information, road tangent/heading, a
 
 Do not transplant horse gait, acceleration, collision avoidance, jump, slope, animation/bridle, or horse physics.
 
-Henry's speed remains vanilla; inject direction, not speed.
+Henry's speed remains vanilla. AutoWalk should sustain ordinary forward movement and apply road-follow steering through the least invasive on-foot heading/turn seam.
+
+Do **not** invent horse-style camera independence for Henry. Do not rotate or decouple the camera as a separate system, and do not convert road direction into a camera-relative strafe vector just to preserve the camera's world-space orientation. Leave KCD2's existing on-foot camera/facing coupling alone.
 
 ## Workstation cycle
 
@@ -63,6 +65,6 @@ Local runtime findings belong in `docs/WORKSTATION_NOTES.md`.
 No Henry movement mutation until both are verified:
 
 1. direct native road sampler call contract;
-2. correct on-foot movement-vector injection seam.
+2. safe on-foot forward-input and heading/turn steering seam.
 
 Mounted horse probing is allowed because it is read-only.
