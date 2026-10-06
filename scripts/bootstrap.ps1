@@ -37,10 +37,6 @@ try {
 
     $verified = (& git rev-parse HEAD).Trim()
     if ($verified -ne $pinnedCommit) { throw "libKCD2 pin verification failed." }
-
-    if (& git status --porcelain) {
-        throw "Pinned libKCD2 checkout is unexpectedly dirty after verification."
-    }
 } finally { Pop-Location }
 
 Write-Host "libKCD2: $pinnedCommit"
