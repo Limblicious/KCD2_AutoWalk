@@ -230,3 +230,19 @@ Key REL IDs used (Steam 1.5.6):
 ## Evidence standard
 
 For each native function/hook record game build, module, REL ID/signature, prototype, fields read/written, validation, failure behavior, and local runtime evidence.
+
+
+## Decompiler-first policy
+
+The existing public mappings are seeds, not a substitute for reconstructing the complete native implementation.
+
+The next reverse-engineering phase is defined in `docs/DECOMPILATION_PLAN.md`.
+
+Do not infer controller behavior from low-frequency runtime probes when the corresponding machine code can be decompiled. Runtime probes are reserved for validating recovered control flow and state transitions at native tick cadence.
+
+The final AutoWalk controller must be explainable as either:
+
+1. execution of the original native controller against a synthetic Henry facade; or
+2. a direct translation of fully recovered native branches/state where direct execution is unsafe.
+
+A custom tangent/cross-track/PID controller is not considered equivalent.
