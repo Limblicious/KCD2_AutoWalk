@@ -84,3 +84,27 @@ Current upstream preserves:
 - secondary rider-state-machine-modifier vtable `0x183C348D0`, REL 495790.
 
 Resolve the actual slot targets in IDA immediately; they are the shortest path to the exact controller algorithms.
+
+
+## Horse Route Follow candidate-filter anchors
+
+The GPLv3 public source for `EvanJGagnon/KCD2-Mods/src/autotravel.cpp` identifies two vanilla road-magnetism candidate-filter call sites on build 15693:
+
+- fork chooser filter call: `0x180A09944`;
+- initial snap chooser filter call: `0x180A09D7E`.
+
+Its hook captures the candidate road endpoints from:
+
+- fork chooser: `r14 -> r15`;
+- initial snap chooser: `rbx -> rsi`;
+
+and then calls the original filter. The mod explicitly leaves steering to vanilla.
+
+These addresses are valuable decompiler anchors because they sit **inside the vanilla candidate-selection flow**. In IDA:
+
+1. inspect the containing function at each call site;
+2. resolve the original call target;
+3. decompile the candidate enumeration/scoring around the call;
+4. connect those functions back to `S_AutoController::Tick` / the road sampler via xrefs.
+
+Do not copy Horse Route Follow's route-planning logic into AutoWalk; its relevance here is the native hook-site discovery.

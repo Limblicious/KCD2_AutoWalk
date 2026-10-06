@@ -129,6 +129,18 @@
       "va": "0x18053B508",
       "priority": 1,
       "purpose": "View-limit clamp used by actor look state"
+    },
+    {
+      "name": "RoadChooser_ForkCandidateFilter_Callsite",
+      "va": "0x180A09944",
+      "priority": 1,
+      "purpose": "Horse Route Follow public source identifies this vanilla callsite as the fork chooser's candidate angle filter call. Follow the call target and containing function."
+    },
+    {
+      "name": "RoadChooser_InitialSnapFilter_Callsite",
+      "va": "0x180A09D7E",
+      "priority": 1,
+      "purpose": "Horse Route Follow public source identifies this vanilla callsite as the initial snap chooser's candidate angle filter call. Follow the call target and containing function."
     }
   ],
   "vtables": [
@@ -137,14 +149,24 @@
       "va": "0x183EAAE18",
       "rel_id": 554715,
       "slots": 4,
-      "slot_contract": ["destructor", "SetHoldLatched", "Tick", "GetRoadDistance"]
+      "slot_contract": [
+        "destructor",
+        "SetHoldLatched",
+        "Tick",
+        "GetRoadDistance"
+      ]
     },
     {
       "name": "VTABLE_S_OnPressController_I_MagnetismController",
       "va": "0x183C34910",
       "rel_id": 495794,
       "slots": 4,
-      "slot_contract": ["destructor", "SetHoldLatched", "Tick", "GetRoadDistance"]
+      "slot_contract": [
+        "destructor",
+        "SetHoldLatched",
+        "Tick",
+        "GetRoadDistance"
+      ]
     },
     {
       "name": "VTABLE_S_OnPressController_I_RiderPlayerStateMachineModifier",
@@ -154,16 +176,59 @@
     }
   ],
   "rtti": [
-    {"name": "RTTI_S_AutoController", "rel_id": 1215465, "rva": "0x4C176B8"},
-    {"name": "RTTI_S_OnPressController", "rel_id": 1215466, "rva": "0x4C176F0"},
-    {"name": "RTTI_C_CameraRider", "rel_id": 1242887, "rva": "0x504EEE0"}
+    {
+      "name": "RTTI_S_AutoController",
+      "rel_id": 1215465,
+      "rva": "0x4C176B8"
+    },
+    {
+      "name": "RTTI_S_OnPressController",
+      "rel_id": 1215466,
+      "rva": "0x4C176F0"
+    },
+    {
+      "name": "RTTI_C_CameraRider",
+      "rel_id": 1242887,
+      "rva": "0x504EEE0"
+    }
   ],
   "structures": [
-    {"name": "S_HorseData", "size": "0x4C8"},
-    {"name": "S_HorseRoadFollow", "size": "0x80"},
-    {"name": "S_AutoController", "size": "0x48"},
-    {"name": "S_HorseMagnetismSample", "size": "0x38"},
-    {"name": "C_ActorPhysicsState", "size": "0x98"},
-    {"name": "C_CameraRider", "size": "0x38"}
+    {
+      "name": "S_HorseData",
+      "size": "0x4C8"
+    },
+    {
+      "name": "S_HorseRoadFollow",
+      "size": "0x80"
+    },
+    {
+      "name": "S_AutoController",
+      "size": "0x48"
+    },
+    {
+      "name": "S_HorseMagnetismSample",
+      "size": "0x38"
+    },
+    {
+      "name": "C_ActorPhysicsState",
+      "size": "0x98"
+    },
+    {
+      "name": "C_CameraRider",
+      "size": "0x38"
+    }
+  ],
+  "external_anchors": [
+    {
+      "source": "EvanJGagnon/KCD2-Mods src/autotravel.cpp GPL-3.0",
+      "build": "15693",
+      "description": "Horse Route Follow redirects the game's vanilla candidate-angle-filter calls but leaves all steering to vanilla.",
+      "fork_callsite": "0x180A09944",
+      "fork_signature": "48 8D 54 24 40 48 8D 4D 9F E8 ?? ?? ?? ?? 84 C0 74 ?? 48 8B 47 68 48 8D 55 AF 4D 8B CF 48 89 45 E7 4D 8B C6 F3 0F 11 7C 24 20",
+      "snap_callsite": "0x180A09D7E",
+      "snap_signature": "48 8D 54 24 38 F3 44 0F 11 5C 24 38 48 8D 4C 24 50 F3 44 0F 11 54 24 3C C7 44 24 40 00 00 00 00 E8 ?? ?? ?? ?? 84 C0 0F 84 ?? ?? ?? ?? 48 8B 44 24 50 48 8D 55 88 48 8B 4D 60 4C 8B CE 4C 8B C3 48 89 44 24 30",
+      "filter_signature_hint": "bool(float*, float*) in that mod's typedef; verify exact native meaning in IDA",
+      "candidate_registers": "fork stub records r14 -> r15; snap stub records rbx -> rsi"
+    }
   ]
 }
