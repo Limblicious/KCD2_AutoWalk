@@ -12,72 +12,149 @@ Pass:
 
 - pinned libKCD2 verified;
 - dependencies resolve;
-- `build/bin/Debug/KCD2_AutoWalk.dll` exists;
-- packaged DLL exists under `dist/kcd_autowalk/KCSE/Plugins`.
+- DLL/package generated.
 
 ## 1. Installation safety
 
-Run diagnose before/after install. Only `<game>/Mods/kcd_autowalk` may change.
+Only `<game>/Mods/kcd_autowalk` may change.
 
-## 2. Plugin load
+## 2. Native mounted baseline capture
 
-Expected log:
+Before judging the on-foot version, record vanilla horse behavior on the same road set:
 
-`<game>/Mods/kcd_autowalk/KCD2_AutoWalk.log`
+- E-hold engagement timing;
+- straight road;
+- shallow/medium/sharp curves;
+- road edge/off-center entry;
+- fork;
+- intersection;
+- short WASD corrections;
+- sustained W/A/S/D deviation until magnetism falls off;
+- release WASD before disengagement and observe resume;
+- mouse free-look while following;
+- maximum left/right/up/down view angles;
+- camera behavior as the horse turns under a stationary mouse view.
 
-Run:
+Log native:
 
-`kcse_autowalk_status`
+- `m_magnetismLive`;
+- `m_magnetYaw`;
+- `m_yawSmoothed`;
+- `m_yawVel`;
+- `m_roadFollow.m_latched`;
+- `m_roadFollow.m_stick`;
+- auto-controller state/path buffers where safely mapped;
+- rider `m_move`, `m_turn`, `m_stickMag`.
 
-Record output in `docs/WORKSTATION_NOTES.md`.
+This baseline is the acceptance oracle.
 
-## 3. Mounted magnetism probe
+## 3. Native controller reconstruction
 
-Run `kcse_autowalk_probe_horse`:
+Using IDA/decompiler + runtime probes, verify:
 
-1. mounted, magnetism inactive;
-2. straight-road follow active;
-3. curve;
-4. fork;
-5. disengage.
+- `S_HorseRoadFollow::Tick` full call flow;
+- `S_AutoController::Tick`;
+- `SetHoldLatched`;
+- `GetRoadDistance`;
+- enter/remain/deactivate hysteresis;
+- crossroad/backtrack/path-vector behavior;
+- manual-input interruption/falloff;
+- output path into `m_magnetYaw` and smoothing.
 
-Correlate `magnetismLive`, mode, yaw, and hit values with visible behavior.
+Pass: a synthetic facade produces the same controller state/output sequence as a mounted horse when fed equivalent pose/speed/input.
 
-## 4. Direct sampler — future
+## 4. Activation behavior
 
-Before movement mutation, prove road acquisition from Henry's on-foot position on the same test roads.
+On foot, near a valid road:
 
-## 5. On-foot forward input and steering — future
+- tap E briefly: should not incorrectly latch if vanilla requires a hold;
+- hold E: acquire using native-equivalent timing;
+- hold E off-road: fail naturally;
+- engage while facing each road direction;
+- engage near fork.
 
-First test synthetic forward input without road following:
+Pass: engagement feels like mounted vanilla, not a custom toggle.
 
-- standing on level ground;
-- walk mode;
-- jog;
-- sprint;
-- collision;
-- stairs/slope;
-- enable/disable repeatedly.
+## 5. Autonomous movement / free-look
 
-Pass: behavior matches ordinary held forward input and never leaves stuck movement.
+With follow active and no WASD:
 
-Then test steering separately:
-
-- small left/right heading corrections;
-- shallow curve;
-- sharp curve;
-- stop steering and verify normal control returns.
+- Henry follows straight/curved roads;
+- move mouse left/right/up/down during travel;
+- keep mouse looking to the side while Henry turns;
+- reach mounted-equivalent yaw limits;
+- verify no 360 spin;
+- verify camera is not forcibly whipped toward the road;
+- verify body/travel direction continues following native road output.
 
 Pass:
 
-- Henry turns through the chosen on-foot heading/turn seam;
-- KCD2's normal camera/facing relationship behaves as it does during ordinary on-foot turning;
-- AutoWalk contains no camera lock, camera decoupling, world-space camera preservation, or camera-relative strafe workaround.
+- travel and view frames are independent during autonomous follow;
+- limits match the horseback camera behavior;
+- no synthetic mouse steering is used to make Henry follow the road.
 
-## 6. Integrated follow — future
+## 6. Manual WASD handoff
 
-Test straight road, curves, junctions, village roads, bridge/narrow path, obstacle, road loss, manual cancel, mount, dialogue, ladder, save/load.
+While follow is active:
+
+### Short intervention
+
+- press W/A/S/D briefly;
+- movement instantly becomes normal on-foot camera-relative manual control;
+- release before native magnetism deactivates.
+
+Pass: autonomous follow resumes without re-holding E if native latch remains alive.
+
+### Sustained intervention
+
+- hold steering/movement long enough to leave the road or exceed native interruption thresholds.
+
+Pass: native magnetism falls off naturally; releasing WASD does not reassert AutoWalk.
+
+### Mixed input
+
+- diagonal WA/WD/SA/SD;
+- Shift;
+- Caps Lock;
+- quick taps vs sustained input.
+
+Pass: no input fighting, no stuck synthetic state.
+
+## 7. Locomotion preservation
+
+Verify:
+
+- Caps Lock walk;
+- normal jog;
+- Shift sprint;
+- stamina drain;
+- collision;
+- stairs/slopes;
+- combat transition;
+- interaction;
+- ladder;
+- mount/dismount;
+- save/load.
+
+## 8. Camera-limit parity
+
+Compare on-foot AutoWalk directly with horseback follow at the same location:
+
+- max left/right yaw;
+- max up/down pitch;
+- recenter behavior if any;
+- body turn beneath camera;
+- mounted camera smoothing characteristics that should/should not be reproduced.
+
+Do not accept arbitrary hardcoded limits merely because they feel reasonable.
 
 ## Release gate
 
-No release until unsupported versions fail closed, install/uninstall is scoped, no stuck movement is possible, and dependency/license notices are complete.
+No release until:
+
+- controller output closely matches mounted vanilla;
+- camera never whips to steer;
+- free-look works within mounted-equivalent limits;
+- manual WASD handoff/resume/falloff matches the native interaction;
+- unsupported builds fail closed;
+- disabling cannot leave stuck movement or camera state.

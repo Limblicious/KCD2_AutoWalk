@@ -4,7 +4,40 @@ Treat the KCD2 installation as production data.
 
 ## Objective
 
-Implement on-foot road following by reusing KCD2's native horse road-magnetism/path-follow logic for road acquisition and steering while preserving Henry's native locomotion, gait, stamina, collision, animation, and normal on-foot camera/facing behavior.
+Implement on-foot road following that **behaves like KCD2's mounted path-follow feature**, including its native road-selection/steering state machine and rider-style camera independence.
+
+The mod should adapt the mounted system to Henry on foot rather than replace it with a custom path controller.
+
+## User-facing control contract
+
+### Engagement
+
+- On foot near/on a valid road, **hold E** to request path follow.
+- Engagement timing/latching should mirror the native horseback interaction as closely as practical.
+
+### Autonomous follow state
+
+While path follow is engaged and the player is not touching WASD:
+
+- Henry's locomotion continues forward automatically.
+- Henry's movement/facing follows the native road-follow controller.
+- Camera yaw is decoupled from Henry's travel direction.
+- Mouse look remains user-controlled.
+- View yaw/pitch limits must match the mounted rider camera behavior; do not permit unrestricted 360-degree look.
+
+### Manual movement
+
+When any WASD input is present:
+
+- manual on-foot movement becomes authoritative immediately;
+- controls are normal camera-relative on-foot controls;
+- do not cancel road follow merely because a key was pressed;
+- native magnetism/interruption logic should decide whether follow remains latched or falls off after enough manual deviation/input.
+
+When WASD returns to neutral:
+
+- if native magnetism is still active, autonomous road-follow resumes;
+- otherwise remain manual until E is held again.
 
 ## Never
 
@@ -14,7 +47,7 @@ Implement on-foot road following by reusing KCD2's native horse road-magnetism/p
 - modify another mod;
 - recursively delete outside this repository or the exact validated `Mods/kcd_autowalk` uninstall target;
 - run `robocopy /MIR`, `git clean -fdx`, destructive reset, force checkout, or force push;
-- commit game binaries, KCSE binaries, Address Library files, extracted proprietary assets, dumps, or machine-specific absolute paths.
+- commit game binaries, KCSE binaries, Address Library files, extracted proprietary assets, IDBs, decompiler databases, dumps, or machine-specific absolute paths.
 
 Generated cleanup is limited to known repo paths such as `build/`, `dist/`, and `.deps/`.
 
@@ -26,24 +59,58 @@ libKCD2 is pinned to:
 
 Do not float against upstream during normal builds. Changing the pin requires explicit compatibility review and documentation updates.
 
-## Native-hook policy
+## Native-hook / reverse-engineering policy
 
-- Prefer Address Library / `REL::ID`.
+- Prefer KCSE Address Library / `REL::ID`.
 - No unexplained hard-coded absolute addresses.
-- If a signature scan is required, document the signature, target, semantics, validation, and failure path.
+- Seed the decompiler with existing libKCD2 RTTI, vtables, REL IDs, types, and known names.
+- Document every recovered native call in `docs/REVERSE_ENGINEERING.md`.
 - Every mutation hook fails closed.
 - Never "try an address and see if it crashes."
-- Do not call mapped virtual methods on unsupported versions without compatibility evidence.
+- Work on a copied/local binary for decompilation; never alter the installed `WHGame.dll`.
 
 ## Architecture constraints
 
-Reuse native road acquisition, road segment information, road tangent/heading, and fork semantics where practical.
+### Reuse from KCD2
 
-Do not transplant horse gait, acceleration, collision avoidance, jump, slope, animation/bridle, or horse physics.
+Recover and reuse/translate, in priority order:
 
-Henry's speed remains vanilla. AutoWalk should sustain ordinary forward movement and apply road-follow steering through the least invasive on-foot heading/turn seam.
+- `S_HorseRoadFollow::Tick`;
+- `S_AutoController::Tick`;
+- hold/latch activation semantics;
+- acquire/remain/deactivate hysteresis;
+- path vectors and backtracking;
+- crossroad prediction;
+- road-width/trend/flick/snap logic;
+- native desired yaw / smoothing semantics;
+- rider WASD intervention behavior;
+- mounted camera decoupling and view limits.
 
-Do **not** invent horse-style camera independence for Henry. Do not rotate or decouple the camera as a separate system, and do not convert road direction into a camera-relative strafe vector just to preserve the camera's world-space orientation. Leave KCD2's existing on-foot camera/facing coupling alone.
+### Keep from Henry
+
+Do not transplant horse:
+
+- gait/acceleration;
+- collision avoider;
+- jump behavior;
+- slope physics;
+- horse animation/bridle state;
+- horse body dimensions.
+
+Henry retains on-foot locomotion, gait, stamina, collision, and animation.
+
+## Explicitly deprecated prototype behavior
+
+Do **not** continue tuning the current custom:
+
+- 15 Hz sample loop;
+- `along-hit` tangent steering;
+- custom cross-track error;
+- custom exponential heading smoothing;
+- synthetic mouse deltas used to whip the camera toward the road;
+- hard cancel on any WASD press.
+
+Those were useful to prove feasibility but do not satisfy the target UX.
 
 ## Workstation cycle
 
@@ -56,15 +123,14 @@ git pull --ff-only
 .\scripts\diagnose.ps1
 ```
 
-On failure, diagnose the failing step. Do not improvise changes to the game installation.
-
-Local runtime findings belong in `docs/WORKSTATION_NOTES.md`.
+Local runtime/decompiler findings belong in `docs/WORKSTATION_NOTES.md` and `docs/REVERSE_ENGINEERING.md`.
 
 ## Current milestone
 
-No Henry movement mutation until both are verified:
+Before replacing the prototype follower, map the complete mounted control pipeline:
 
-1. direct native road sampler call contract;
-2. safe on-foot forward-input and heading/turn steering seam.
-
-Mounted horse probing is allowed because it is read-only.
+1. native auto-controller road-follow state machine;
+2. how manual rider input blends/interferes with magnetism;
+3. activation/latching via the mounted follow-path action;
+4. mounted camera selection/compose, view limits, and horse-yaw-to-rider-camera glue;
+5. the clean dismounted seams needed to supply native steering without forcing camera yaw.

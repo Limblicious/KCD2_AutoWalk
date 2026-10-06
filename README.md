@@ -1,29 +1,59 @@
 # KCD2 AutoWalk
 
-Native KCSE mod for **Kingdom Come: Deliverance II** intended to reuse the game's horse road-magnetism / road-follow logic while Henry is on foot.
+Native KCSE mod for **Kingdom Come: Deliverance II** intended to make Henry follow roads on foot by reusing the game's **actual mounted road-magnetism / road-follow controller**, not by approximating it with custom steering.
 
 ## Target behavior
 
-- KCD2's native horse road-follow logic determines the road and desired heading.
-- AutoWalk supplies sustained on-foot forward movement, equivalent in intent to holding `W`.
-- Road-follow steering corrects Henry's heading so he stays on the road.
-- Vanilla locomotion remains responsible for speed state:
-  - Caps Lock: walk
-  - normal: jog
-  - Shift: sprint
-- KCD2's normal on-foot camera/facing relationship is left untouched. The mod does **not** create horse-style camera independence, preserve a fixed world-space camera heading, or synthesize camera-relative strafing.
-- Horse acceleration, collision avoidance, animation, and physics are not transplanted.
+The intended experience should mirror vanilla horseback path follow:
 
-This is not just a blind W-key macro and is not a custom road graph. The forward movement is simple; the road acquisition and steering are intended to come from KCD2's native road-follow system.
+1. Henry is on foot and near/on a valid road.
+2. The player **holds E** to engage path follow, matching the vanilla horse interaction.
+3. Once engaged and the player is **not touching WASD**:
+   - KCD2's native horse road-follow controller determines the road, continuation, and steering;
+   - Henry continues moving forward using normal on-foot locomotion;
+   - Henry's travel/facing direction is **decoupled from camera yaw**;
+   - mouse look is free so the player can enjoy the scenery;
+   - look rotation is constrained by the **same mounted camera/view limits** used while riding (no unrestricted 360-degree spin).
+4. When the player supplies **W/A/S/D**:
+   - manual movement immediately becomes authoritative;
+   - movement uses normal on-foot camera-relative controls;
+   - mouse look behaves normally for manual locomotion;
+   - the native magnetism controller remains responsible for whether road follow survives the intervention or naturally deactivates after enough deviation/input, just as it does on horseback.
+5. When manual movement stops:
+   - if vanilla magnetism is still active/latched, autonomous road following resumes;
+   - if vanilla logic has disengaged it, Henry remains under normal manual control until the player holds E again.
+
+Caps Lock, Shift, stamina, collision, slopes, animation, and normal on-foot movement speed remain vanilla.
+
+## Important architecture rule
+
+This project must **not** reproduce horse path following with a homemade tangent/CTE/PID-style controller if the native controller can be executed or translated directly.
+
+The current experimental implementation on `main` proves that Henry can be moved and that native roads can be sampled, but its 15 Hz road sampling + custom cross-track correction + synthetic mouse steering is **not the target implementation**. That code is diagnostic/prototype work only.
+
+The next implementation phase is to reverse the complete mounted pipeline:
+
+- `S_HorseRoadFollow::Tick`
+- `S_AutoController::Tick`
+- `S_OnPressController` / hold-to-engage behavior
+- native path vectors, hysteresis, crossroad prediction, backtracking, snap/trend logic
+- how rider WASD influences magnetism and disengagement
+- native `m_magnetYaw` / smoothing output
+- rider camera decoupling, mounted camera limits, and camera recentering
+
+Then the mod should reuse that behavior with a dismounted actuator.
 
 ## Current status
 
-**Instrumentation milestone.** The repo currently scaffolds the native KCSE plugin and diagnostics. It does not yet mutate Henry's movement.
+The workstation has already demonstrated:
 
-The two remaining native seams before movement is enabled are:
+- clean KCSE build/install;
+- native road sampling from Henry's position;
+- synthetic held-W movement;
+- synthetic input events;
+- a first experimental on-foot road follower.
 
-1. verify the direct road-sampler call contract currently associated with `sub_180A0A124`;
-2. verify the on-foot forward-input and heading/turn steering seam.
+That experimental follower is intentionally considered **superseded architecture** because it turns the camera to steer Henry and bypasses most of KCD2's native road-follow state machine.
 
 ## Compatibility
 
@@ -31,17 +61,12 @@ Pinned libKCD2:
 
 `10d20f28faba462c4bf98a01abb48225cc51bb91`
 
-That revision states KCD2 Steam **1.5.6** as its native target. KCSE and a matching KCSE Address Library are required.
+Current runtime target:
 
-## Prerequisites
-
-- Windows 10/11
-- Visual Studio 2022, Desktop development with C++
-- Git
-- CMake
-- vcpkg
-- `VCPKG_ROOT` set to the vcpkg checkout
-- KCD2 + KCSE + matching Address Library for runtime testing
+- KCD2 Steam 1.5.6
+- build `release_1_5-15693`
+- KCSE
+- matching KCSE Address Library
 
 ## Build
 
@@ -59,13 +84,13 @@ Package/install:
 .\scripts\install.ps1 -Configuration Debug
 ```
 
-Or one development cycle:
+Or:
 
 ```powershell
 .\scripts\dev.ps1 -Configuration Debug
 ```
 
-Installed layout:
+## Installed layout
 
 ```text
 KingdomComeDeliverance2/
@@ -79,26 +104,13 @@ KingdomComeDeliverance2/
             └─ KCD2_AutoWalk.dll
 ```
 
-The scripts never install or overwrite KCSE, the Address Library, game executables, or another mod.
+## Reverse-engineering direction
 
-## Diagnostic commands
+The preferred local workflow is **IDA + Hex-Rays decompiler + an MCP bridge/server connected to the workstation agent**, using a local working copy of `WHGame.dll` and an IDB that is never committed.
 
-- `kcse_autowalk_status`
-- `kcse_autowalk_probe_horse`
+Existing libKCD2 symbols/REL IDs should be applied as seeds instead of starting from an unnamed binary.
 
-The second command is a mounted-horse read-only probe for already mapped road-magnetism fields.
-
-## Roadmap
-
-1. build/load verification;
-2. mounted road-magnetism observations;
-3. direct on-foot road sampling;
-4. on-foot forward-input + steering integration;
-5. toggle/cancel behavior;
-6. compatibility guards and release packaging;
-7. Steam Workshop testing only after KCSE Workshop plugin discovery is verified.
-
-See `docs/` and `AGENTS.md`.
+See `docs/ARCHITECTURE.md`, `docs/REVERSE_ENGINEERING.md`, `docs/TEST_PLAN.md`, and `AGENTS.md`.
 
 ## License
 
