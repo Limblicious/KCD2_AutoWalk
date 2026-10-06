@@ -1,0 +1,9 @@
+{
+  "name": "kcd2-autowalk",
+  "version-string": "0.1.0-dev",
+  "dependencies": [
+    "boost-container",
+    "minhook",
+    "spdlog"
+  ]
+}

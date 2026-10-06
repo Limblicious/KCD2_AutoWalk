@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<kcd_mod>
+  <info>
+    <name>KCD2 AutoWalk</name>
+    <modid>kcd_autowalk</modid>
+    <description>On-foot road following using KCD2's native horse road-magnetism logic.</description>
+    <author>Limblicious</author>
+    <version>0.1.0-dev</version>
+    <created_on>2026-10-05</created_on>
+  </info>
+  <supports>
+    <version>1.5.6*</version>
+  </supports>
+</kcd_mod>
