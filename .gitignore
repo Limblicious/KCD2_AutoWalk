@@ -3,6 +3,9 @@
 /dist/
 /out/
 
+# vcpkg manifest install tree
+/vcpkg_installed/
+
 # Local dependency checkout
 /.deps/
 

@@ -1,6 +1,7 @@
 {
   "name": "kcd2-autowalk",
   "version-string": "0.1.0-dev",
+  "builtin-baseline": "2e776305f2542cc626716435b0c1baf67bb5ab45",
   "dependencies": [
     "boost-container",
     "boost-optional",

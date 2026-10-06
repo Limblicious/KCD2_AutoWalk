@@ -35,6 +35,9 @@ $configureArgs = @(
     "-DVCPKG_TARGET_TRIPLET=x64-windows-static-md",
     "-DLIBKCD2_ROOT=$LibKCD2Root"
 )
+if ($env:KCD2_VS_INSTANCE -and (Test-Path -LiteralPath (($env:KCD2_VS_INSTANCE -split ',')[0]) -PathType Container)) {
+    $configureArgs += "-DCMAKE_GENERATOR_INSTANCE=$env:KCD2_VS_INSTANCE"
+}
 & cmake @configureArgs
 if ($LASTEXITCODE -ne 0) { throw "CMake configure failed." }
 
