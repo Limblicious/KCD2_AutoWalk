@@ -27,7 +27,7 @@ try {
     }
 
     $current = (& git rev-parse HEAD 2>$null)
-    if ($LASTEXITCODE -ne 0 -or $current -ne $pinnedCommit) {
+    if ($freshClone -or $LASTEXITCODE -ne 0 -or $current -ne $pinnedCommit) {
         & git fetch --depth 1 origin $pinnedCommit
         if ($LASTEXITCODE -ne 0) { throw "Failed to fetch pinned libKCD2 commit." }
 
