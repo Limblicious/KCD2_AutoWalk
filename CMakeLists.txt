@@ -29,6 +29,7 @@ set(LIBKCD2_RUNTIME_SOURCES
 )
 
 add_library(kcd_re_min STATIC ${LIBKCD2_RUNTIME_SOURCES})
+target_precompile_headers(kcd_re_min PRIVATE "${CMAKE_SOURCE_DIR}/src/PCH.h")
 target_compile_definitions(kcd_re_min PRIVATE
     _ITERATOR_DEBUG_LEVEL=0
     WIN32_LEAN_AND_MEAN
@@ -44,6 +45,7 @@ file(GLOB_RECURSE AUTOWALK_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/*.h")
 
 add_library(KCD2_AutoWalk SHARED ${AUTOWALK_SOURCES})
+target_precompile_headers(KCD2_AutoWalk PRIVATE "${CMAKE_SOURCE_DIR}/src/PCH.h")
 target_compile_definitions(KCD2_AutoWalk PRIVATE
     _ITERATOR_DEBUG_LEVEL=0
     WIN32_LEAN_AND_MEAN
