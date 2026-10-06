@@ -21,6 +21,7 @@ find_package(minhook CONFIG REQUIRED)
 # layouts still under active RE. We only build the small runtime subset required by
 # the headers/functions AutoWalk actually calls.
 set(LIBKCD2_RUNTIME_SOURCES
+    "${LIBKCD2_ROOT}/.buildenv/CrySDKStubs.cpp"
     "${LIBKCD2_ROOT}/src/REL/BranchTrampoline.cpp"
     "${LIBKCD2_ROOT}/src/REL/IDDatabase.cpp"
     "${LIBKCD2_ROOT}/src/REL/Module.cpp"
