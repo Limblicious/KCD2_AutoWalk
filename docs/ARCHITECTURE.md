@@ -11,13 +11,15 @@ KCD2 native road system
 road acquisition / road sample
         |
         v
-desired world-space road direction
+desired road heading / steering correction
         |
         v
-world -> camera-local movement transform
+Henry on-foot heading / turn seam
         |
-        v
-normalized Henry movement input
+        +--------------------+
+        |                    |
+        v                    v
+sustained forward input   vanilla on-foot camera/facing coupling
         |
         v
 vanilla on-foot locomotion
@@ -42,19 +44,21 @@ Do not transplant:
 - horse animation/bridle state;
 - horse physics.
 
-## Camera independence
+## On-foot camera and movement model
 
-The mod should not rotate the camera just to make forward input point along the road.
+KCD2's on-foot camera and Henry's facing/travel direction are not independent in the way horse travel and camera look direction can be.
 
-Given desired road heading R and camera heading C:
+AutoWalk therefore must **not** create a special decoupled camera mode.
 
-```text
-delta = R - C
-moveX = sin(delta)
-moveY = cos(delta)
-```
+The intended control model is:
 
-Normalize the horizontal vector and inject it at full magnitude. Henry's downstream locomotion then decides walk/jog/sprint normally.
+1. native road-follow logic provides the desired road heading / steering correction;
+2. the mod steers Henry through an appropriate on-foot heading/turn seam;
+3. the mod sustains ordinary forward movement, equivalent in intent to holding `W`;
+4. KCD2's existing on-foot camera/facing behavior is allowed to respond normally;
+5. Caps Lock / Shift and downstream locomotion continue to choose walk, jog, or sprint.
+
+There is no world-to-camera movement-vector transform in the target architecture, and the mod should not synthesize lateral movement merely to keep the camera fixed while Henry changes road direction.
 
 ## Native system map
 
@@ -79,7 +83,7 @@ C_Horse
 1. deterministic build/install and diagnostics;
 2. mounted road instrumentation;
 3. direct on-foot road sampling;
-4. on-foot movement-vector injection;
+4. on-foot forward-input and heading/turn seam;
 5. integrated follow controller;
 6. compatibility hardening;
 7. release distribution.
