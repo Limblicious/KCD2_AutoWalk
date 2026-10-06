@@ -1,0 +1,169 @@
+{
+  "schema_version": 1,
+  "target": {
+    "module": "WHGame.dll",
+    "expected_image_base": "0x180000000",
+    "expected_runtime": "KCD2 Steam 1.5.6 / release_1_5-15693",
+    "rule": "Verify target hash/build before applying absolute VAs. Prefer REL IDs when available."
+  },
+  "functions": [
+    {
+      "name": "S_HorseRoadFollow_Tick",
+      "va": "0x180A4E5AC",
+      "rel_id": 56405,
+      "priority": 1,
+      "purpose": "Top-level mounted road-follow tick"
+    },
+    {
+      "name": "HorseRoadFollow_RebuildControllerMode",
+      "va": "0x180A4E9B8",
+      "priority": 1,
+      "purpose": "Rebuilds mode 0/1/2 controller from options"
+    },
+    {
+      "name": "HorseRoadSample_Wrapper",
+      "va": "0x181ED8860",
+      "rel_id": 194146,
+      "priority": 1,
+      "purpose": "Road sampling wrapper already called by prototype"
+    },
+    {
+      "name": "HorseRoadSample_StateBuilder",
+      "va": "0x181ED7ED0",
+      "rel_id": 194136,
+      "priority": 1,
+      "purpose": "Builds road query state from horse/entity"
+    },
+    {
+      "name": "HorseRoadSample_Sampler",
+      "va": "0x180A0A124",
+      "rel_id": 55123,
+      "priority": 1,
+      "purpose": "Fills S_HorseMagnetismSample"
+    },
+    {
+      "name": "S_AutoController_Factory",
+      "va": "0x1829FC188",
+      "priority": 1,
+      "purpose": "Allocates mode-2 road magnetism controller"
+    },
+    {
+      "name": "S_OnPressController_Factory",
+      "va": "0x181932168",
+      "priority": 1,
+      "purpose": "Allocates mode-1 on-press road magnetism controller"
+    },
+    {
+      "name": "S_OnPressController_Ctor",
+      "va": "0x1819321F8",
+      "priority": 1,
+      "purpose": "Mode-1 controller constructor"
+    },
+    {
+      "name": "I_MagnetismController_SetHoldLatched_Dispatch",
+      "va": "0x180A4E98C",
+      "priority": 1,
+      "purpose": "Virtual SetHoldLatched dispatch callsite/helper; resolve implementation through controller vtables"
+    },
+    {
+      "name": "I_MagnetismController_Tick_Dispatch",
+      "va": "0x180A4E768",
+      "priority": 1,
+      "purpose": "Virtual Tick dispatch callsite/helper; resolve implementation through controller vtables"
+    },
+    {
+      "name": "HorseYaw_SmoothCD",
+      "va": "0x18059B800",
+      "priority": 2,
+      "purpose": "Smoother used by S_HorseData m_yawSmoothed chasing m_magnetYaw"
+    },
+    {
+      "name": "HorseYaw_SmoothingUpdate",
+      "va": "0x180A4FDF1",
+      "priority": 2,
+      "purpose": "Yaw smoothing/sign-flip/pseudo-speed logic region"
+    },
+    {
+      "name": "S_HorseData_Update",
+      "va": "0x1806CEB68",
+      "priority": 2,
+      "purpose": "Horse controller update; downstream steering consumer context"
+    },
+    {
+      "name": "C_CameraRider_Compose",
+      "va": "0x1839C3748",
+      "rel_id": 434788,
+      "priority": 1,
+      "purpose": "Mounted camera compose"
+    },
+    {
+      "name": "C_CameraFirstPerson_Compose",
+      "va": "0x18094D030",
+      "rel_id": 51045,
+      "priority": 2,
+      "purpose": "On-foot first-person compose for comparison"
+    },
+    {
+      "name": "HorseFlatYaw_To_RiderLookAccum",
+      "va": "0x1806CCAF8",
+      "rel_id": 37998,
+      "priority": 1,
+      "purpose": "Mounted horse yaw delta forwarded into rider view-state accumulator"
+    },
+    {
+      "name": "MountedCamera_Centering",
+      "va": "0x180A501E8",
+      "rel_id": 56442,
+      "priority": 1,
+      "purpose": "Mounted camera centering"
+    },
+    {
+      "name": "C_ActorPhysicsState_Tick",
+      "va": "0x1804415E0",
+      "rel_id": 26156,
+      "priority": 2,
+      "purpose": "Per-actor look-state integrator"
+    },
+    {
+      "name": "ActorViewLimit_Clamp",
+      "va": "0x18053B508",
+      "priority": 1,
+      "purpose": "View-limit clamp used by actor look state"
+    }
+  ],
+  "vtables": [
+    {
+      "name": "VTABLE_S_AutoController",
+      "va": "0x183EAAE18",
+      "rel_id": 554715,
+      "slots": 4,
+      "slot_contract": ["destructor", "SetHoldLatched", "Tick", "GetRoadDistance"]
+    },
+    {
+      "name": "VTABLE_S_OnPressController_I_MagnetismController",
+      "va": "0x183C34910",
+      "rel_id": 495794,
+      "slots": 4,
+      "slot_contract": ["destructor", "SetHoldLatched", "Tick", "GetRoadDistance"]
+    },
+    {
+      "name": "VTABLE_S_OnPressController_I_RiderPlayerStateMachineModifier",
+      "va": "0x183C348D0",
+      "rel_id": 495790,
+      "purpose": "Secondary base; recover rider state-machine input/output modifier behavior"
+    }
+  ],
+  "rtti": [
+    {"name": "RTTI_S_AutoController", "rel_id": 1215465, "rva": "0x4C176B8"},
+    {"name": "RTTI_S_OnPressController", "rel_id": 1215466, "rva": "0x4C176F0"},
+    {"name": "RTTI_C_CameraRider", "rel_id": 1242887, "rva": "0x504EEE0"}
+  ],
+  "structures": [
+    {"name": "S_HorseData", "size": "0x4C8"},
+    {"name": "S_HorseRoadFollow", "size": "0x80"},
+    {"name": "S_AutoController", "size": "0x48"},
+    {"name": "S_HorseMagnetismSample", "size": "0x38"},
+    {"name": "C_ActorPhysicsState", "size": "0x98"},
+    {"name": "C_CameraRider", "size": "0x38"}
+  ]
+}

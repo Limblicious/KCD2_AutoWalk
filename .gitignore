@@ -38,3 +38,12 @@ CMakeUserPresets.json
 Thumbs.db
 .vscode/
 .idea/
+
+# Reverse-engineering local workspace: copied game binary, IDA DBs, dumps
+/.re/
+*.i64
+*.id0
+*.id1
+*.id2
+*.nam
+*.til
