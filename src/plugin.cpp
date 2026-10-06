@@ -57,13 +57,13 @@ void RegisterConsoleSurface()
     env->pConsole->AddCommand(
         "kcse_autowalk_status",
         &ConsoleStatus,
-        VF_NULL,
+        0,
         "KCD2 AutoWalk: print plugin/runtime status.");
 
     env->pConsole->AddCommand(
         "kcse_autowalk_probe_horse",
         &ConsoleProbeHorse,
-        VF_NULL,
+        0,
         "KCD2 AutoWalk: read current mounted horse road-magnetism state.");
 }
 

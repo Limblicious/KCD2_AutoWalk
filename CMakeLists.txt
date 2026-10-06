@@ -49,8 +49,7 @@ target_precompile_headers(KCD2_AutoWalk PRIVATE "${CMAKE_SOURCE_DIR}/src/PCH.h")
 target_compile_definitions(KCD2_AutoWalk PRIVATE
     _ITERATOR_DEBUG_LEVEL=0
     WIN32_LEAN_AND_MEAN
-    NOMINMAX
-    AUTOWALK_LIBKCD2_COMMIT="\"${AUTOWALK_LIBKCD2_COMMIT}\"")
+    NOMINMAX)
 target_compile_options(KCD2_AutoWalk PRIVATE /utf-8 /W4 /wd4819 /wd4100)
 target_include_directories(KCD2_AutoWalk PRIVATE
     "${LIBKCD2_ROOT}/include"

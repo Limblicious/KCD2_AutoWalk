@@ -19,6 +19,6 @@ RuntimeInfo Capture(const KCSE::IKCSEInterface* kcse);
 std::string Describe(const RuntimeInfo& info);
 
 constexpr const char* TargetGameVersion() { return "Steam 1.5.6"; }
-constexpr const char* PinnedLibKCD2Commit() { return AUTOWALK_LIBKCD2_COMMIT; }
+constexpr const char* PinnedLibKCD2Commit() { return "10d20f28faba462c4bf98a01abb48225cc51bb91"; }
 
 } // namespace AutoWalk::Compatibility
