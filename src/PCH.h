@@ -19,6 +19,12 @@
 #include <unordered_set>
 #include <vector>
 
+// Some libKCD2 headers rely on the full upstream kcd.h umbrella to have
+// declared core CryEngine interface names before their own class definitions.
+// AutoWalk uses a narrower PCH, so provide the minimal forward declarations
+// required by the runtime subset we compile.
+struct ISystem;
+
 #include "CryEngine/CryCommon/BaseTypes.h"
 #include "CryEngine/CryCommon/CryString.h"
 #include "CryEngine/CryCommon/Cry_Math.h"
