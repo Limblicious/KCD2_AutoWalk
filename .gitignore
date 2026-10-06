@@ -1,0 +1,37 @@
+# Build output
+/build/
+/dist/
+/out/
+
+# Local dependency checkout
+/.deps/
+
+# Visual Studio / CMake
+.vs/
+CMakeUserPresets.json
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.pdb
+*.ilk
+*.obj
+*.tlog
+*.idb
+*.ipdb
+*.iobj
+
+# Local workstation configuration
+.local/
+.env
+*.local.ps1
+
+# Runtime logs / captures
+*.log
+/logs/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
