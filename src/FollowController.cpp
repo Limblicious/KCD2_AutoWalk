@@ -49,29 +49,6 @@ float g_manualHeldTime = 0.0f;
 constexpr float kManualHoldDeactivateSeconds = 3.0f;
 
 PromptState g_lastPromptState = PromptState::Hidden;
-bool g_cameraMountedStyle = false;
-
-// Camera mode switch: the mounted rider camera composes from the look state
-// (mouse) independent of the body, exactly like on horseback.
-void SetCameraMountedStyle(bool on)
-{
-    auto* ctx = wh::game::S_GameContext::GetInstance();
-    auto* cam = ctx
-        ? *reinterpret_cast<wh::game::C_CameraManager**>(
-              reinterpret_cast<std::uintptr_t>(ctx) + 0x38)
-        : nullptr;
-    if (!cam) {
-        return;
-    }
-    if (on == g_cameraMountedStyle) {
-        return;
-    }
-    auto* active = reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(cam) + 0x30);
-    void* firstPerson = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(cam) + 0x1E8);
-    void* rider = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(cam) + 0x3C0);
-    *active = on ? rider : firstPerson;
-    g_cameraMountedStyle = on;
-}
 
 // True while the current PostInputEvent call is our own synthetic W press.
 std::atomic<bool> g_syntheticPressInFlight{false};
@@ -362,7 +339,6 @@ void Enable()
 void Disable()
 {
     ReleaseForward();
-    SetCameraMountedStyle(false);
     g_state.flags = 0;
     g_phase.store(Phase::Disabled);
     SetPromptState(PromptState::Hidden);
@@ -372,27 +348,25 @@ void Disable()
 void Reset()
 {
     ReleaseForward();
-    SetCameraMountedStyle(false);
     g_state.flags = 0;
     g_phase.store(Phase::Disabled);
 }
 
 void Tick()
 {
-    if (g_phase.load() == Phase::Disabled) {
-        return;
-    }
-
     auto* framework = CCryAction::GetInstance();
     auto* player = framework
         ? static_cast<wh::entitymodule::C_Player*>(framework->GetClientActor())
         : nullptr;
 
     if (!player || IsMounted()) {
-        ReleaseForward();
-        g_state.flags = 0;
-        g_phase.store(Phase::Disabled);
-        Log::Write("[AutoWalk] FollowController: stopped (player unavailable or mounted).");
+        if (g_phase.load() != Phase::Disabled) {
+            ReleaseForward();
+            g_state.flags = 0;
+            g_phase.store(Phase::Disabled);
+            Log::Write("[AutoWalk] FollowController: stopped (player unavailable or mounted).");
+        }
+        SetPromptState(PromptState::Hidden);
         return;
     }
 
@@ -409,8 +383,7 @@ void Tick()
     // Native tuning values.
     const NativeMagnetism::FrameCVars* cvars = nullptr;
     if (!NativeMagnetism::RefreshFrameCVars(cvars) || !cvars) {
-        Log::Write("[AutoWalk] FollowController: frame cvars unavailable.");
-        Disable();
+        SetPromptState(PromptState::Hidden);
         return;
     }
 
@@ -428,17 +401,43 @@ void Tick()
         sample = g_cachedSample;
     }
 
-    // State machine with the recovered semantics.
-    const bool manual = g_manualInput.exchange(false);
+    // Idle prompt: show "hold E to follow path" whenever the player is on
+    // foot, on a road, and not following -- no console command involved.
+    const bool engaged = (g_state.flags & 0x01) != 0;
+    const bool onRoad = haveSample && sample.hasHit;
+
+    if (g_phase.load() == Phase::Disabled && !engaged) {
+        if (onRoad) {
+            SetPromptState(PromptState::Activate);
+        } else {
+            SetPromptState(PromptState::Hidden);
+        }
+    }
+
+    // Engagement via the native hold-E dispatch.
     const bool engage = g_engageRequested.exchange(false);
     const bool disengage = g_disengageRequested.exchange(false);
-    const bool failed = haveSample && sample.failed;
-    const bool chat = IsChatFollowActive();
-
+    if (engage && !engaged && onRoad) {
+        g_state.flags |= 0x01;
+        g_state.flags |= 0x02;
+        g_state.flags &= ~0x10;
+        g_smoother = {};
+        g_prevSmoothedYaw = 0.0f;
+        g_phase.store(Phase::AwaitingRoad);
+        Log::Write("[AutoWalk] FollowController: engaged via hold E.");
+    }
     if (disengage) {
         Disable();
         return;
     }
+    if (!engaged) {
+        return;
+    }
+
+    // State machine with the recovered semantics.
+    const bool manual = g_manualInput.exchange(false);
+    const bool failed = haveSample && sample.failed;
+    const bool chat = IsChatFollowActive();
 
     // Manual WASD: camera re-couples to travel; held >3s deactivates.
     const bool manualHeld = IsManualHeld();
@@ -454,24 +453,17 @@ void Tick()
     }
 
     const bool followActive = NativeMagnetism::TickStateMachine(
-        g_state, dt, *cvars, manual, chat, failed, engage);
+        g_state, dt, *cvars, manual, chat, failed, false);
 
     if (!followActive) {
         ReleaseForward();
-        SetCameraMountedStyle(false);
         g_phase.store(Phase::Disabled);
         SetPromptState(PromptState::Hidden);
         Log::Write("[AutoWalk] FollowController: deactivated (state machine).");
         return;
     }
 
-    // Camera decoupling + prompt rows follow the engagement state.
-    const bool following = haveSample && sample.hasHit;
-    if (following && !manualHeld) {
-        SetCameraMountedStyle(true);
-    } else {
-        SetCameraMountedStyle(false);
-    }
+    const bool following = onRoad;
     if (following && !manualHeld) {
         SetPromptState(PromptState::Deactivate);
     } else if (!following) {
