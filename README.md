@@ -126,16 +126,19 @@ The repo already contains:
 - `re/seed_manifest.json` — known functions, REL IDs, vtables, RTTI, and vanilla road-chooser anchors;
 - `re/type_layouts.json` — mapped controller/view-state layouts;
 - `re/horse_cvars.json` — named road-magnetism/steering/camera CVar offsets;
-- `re/ida_apply_seeds.py` — applies known names to the IDB;
-- `re/ida_dump_vtables.py` — dumps concrete vtable slot targets for the native controllers.
+- `re/ghidra_scripts/ApplyAutoWalkSeeds.java` — applies known function/vtable/RTTI names and resolves controller vtables;
+- `re/ghidra_scripts/DumpAutoWalkVtables.java` — prints concrete controller vtable slot targets;
+- `re/autowalk_types.h` — Ghidra-importable known controller/view-state layouts.
 
 The goal of the first local session is to decompile the actual `S_AutoController` and `S_HorseRoadFollow` implementation, not to modify Henry's movement.
 
 ## Reverse-engineering direction
 
-The preferred local workflow is **IDA + Hex-Rays decompiler + an MCP bridge/server connected to the workstation agent**, using a local working copy of `WHGame.dll` and an IDB that is never committed.
+The preferred local workflow is **Ghidra 12.1.4 + GhidraMCP v0.9.0 + OpenCode**, using a copied `WHGame.dll` and a Ghidra project under ignored `.re/`.
 
-Existing libKCD2 symbols/REL IDs should be applied as seeds instead of starting from an unnamed binary.
+GhidraMCP runs locally inside Ghidra and exposes decompilation, xrefs, symbols, prototypes, data types/structs, RTTI, and vtable analysis to OpenCode. Existing libKCD2 symbols/REL IDs are applied as seeds instead of starting from an unnamed binary.
+
+See `docs/GHIDRA_SETUP.md` for the exact tool versions and connection procedure.
 
 See `docs/ARCHITECTURE.md`, `docs/REVERSE_ENGINEERING.md`, `docs/TEST_PLAN.md`, and `AGENTS.md`.
 
