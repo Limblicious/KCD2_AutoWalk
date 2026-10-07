@@ -27,21 +27,14 @@ namespace {
 std::atomic<Phase> g_phase{Phase::Disabled};
 bool g_wHeld = false;
 
-constexpr float kSampleDistance = 40.0f;
-constexpr float kSampleIntervalSeconds = 1.0f / 15.0f; // 15 Hz road sampling
-
-std::chrono::steady_clock::time_point g_lastSample{};
 std::chrono::steady_clock::time_point g_lastLog{};
 std::chrono::steady_clock::time_point g_lastTick{};
 
-NativeMagnetism::OnPressState g_state{};
 NativeMagnetism::YawSmoother g_smoother{};
 float g_prevSmoothedYaw = 0.0f;
 float g_targetYaw = 0.0f;
 bool g_targetValid = false;
-
-FootRoad::FootRoadProbe g_cachedSample{};
-bool g_cachedSampleValid = false;
+bool g_nativeEnsured = false;
 
 // User-input signals gathered by the input listener each frame.
 std::atomic<bool> g_engageRequested{false};
@@ -306,20 +299,18 @@ void Enable()
 {
     EnsureInputListener();
     g_phase.store(Phase::AwaitingRoad);
-    g_state.flags |= 0x01; // console override engages directly
-    g_state.flags |= 0x02;
-    g_state.flags &= ~0x10;
     g_smoother = {};
     g_prevSmoothedYaw = 0.0f;
     g_targetYaw = 0.0f;
     g_targetValid = false;
-    Log::Write("[AutoWalk] FollowController: enabled (native-faithful).");
+    FootRoad::NativeSetHoldLatched(true);
+    Log::Write("[AutoWalk] FollowController: enabled (native latch).");
 }
 
 void Disable()
 {
     ReleaseForward();
-    g_state.flags = 0;
+    FootRoad::NativeSetHoldLatched(false);
     g_phase.store(Phase::Disabled);
     g_targetValid = false;
     UpdatePromptFlags(false, false, false);
@@ -329,7 +320,6 @@ void Disable()
 void Reset()
 {
     ReleaseForward();
-    g_state.flags = 0;
     g_phase.store(Phase::Disabled);
 }
 
@@ -343,7 +333,7 @@ void Tick()
     if (!player || IsMounted()) {
         if (g_phase.load() != Phase::Disabled) {
             ReleaseForward();
-            g_state.flags = 0;
+            FootRoad::NativeSetHoldLatched(false);
             g_phase.store(Phase::Disabled);
             Log::Write("[AutoWalk] FollowController: stopped (player unavailable or mounted).");
         }
@@ -367,64 +357,47 @@ void Tick()
         return;
     }
 
-    // Road acquisition through the native sampler (cached between samples).
+    // One-time native facade wiring: property vtable (game GetValue), the
+    // rider-sync fabrication (GetRider -> real player) and the neutral move
+    // adapter. The native rebuild then creates the on-press controller.
+    if (!g_nativeEnsured) {
+        g_nativeEnsured = true;
+        FootRoad::EnsureNativeRoadFollow();
+        Log::Write(std::string("[AutoWalk] FollowController: native road-follow initialized, ready=") +
+                   std::to_string(FootRoad::NativeFollowReady()));
+    }
+
+    // The full native tick (S_HorseRoadFollow_Tick REL 56405): sampling,
+    // path persistence, controller phases and the yaw command -- the same
+    // chain S_HorseData_Update runs for the mounted horse.
     FootRoad::FootRoadProbe sample{};
-    bool haveSample = false;
-    if (g_lastSample == steady_clock::time_point{} ||
-        now - g_lastSample >= milliseconds(static_cast<long long>(kSampleIntervalSeconds * 1000.0f))) {
-        g_lastSample = now;
-        haveSample = FootRoad::SampleRoadStandalone(kSampleDistance, sample);
-        g_cachedSample = sample;
-        g_cachedSampleValid = haveSample;
-    } else if (g_cachedSampleValid) {
-        haveSample = true;
-        sample = g_cachedSample;
-    }
+    const bool haveSample = FootRoad::TickNativeRoadFollow(dt, sample);
 
-    // Idle prompt: show "hold E to follow path" whenever the player is on
-    // foot, on a road, and not following -- no console command involved.
-    const bool engaged = (g_state.flags & 0x01) != 0;
     const bool onRoad = haveSample && sample.hasHit;
+    const bool latched = FootRoad::NativeLatched();
 
-    if (g_phase.load() == Phase::Disabled && !engaged) {
-        UpdatePromptFlags(onRoad, false, false);
-    }
-
-    // Engagement via the native hold-E dispatch.
+    // Engagement via the native hold-E dispatch: the OnPress SetHoldLatched
+    // is a bit-trivial latch; the tick's own phases decide enter/reject.
     const bool engage = g_engageRequested.exchange(false);
     const bool disengage = g_disengageRequested.exchange(false);
-    if (engage && !engaged && onRoad) {
-        g_state.flags |= 0x01;
-        g_state.flags |= 0x02;
-        g_state.flags &= ~0x10;
-        g_smoother = {};
-        g_prevSmoothedYaw = 0.0f;
-        g_targetYaw = 0.0f;
-        g_targetValid = false;
-        g_phase.store(Phase::AwaitingRoad);
-        Log::Write("[AutoWalk] FollowController: engaged via hold E.");
+    if (engage && !latched && onRoad) {
+        FootRoad::NativeSetHoldLatched(true);
+        Log::Write("[AutoWalk] FollowController: latched via hold E.");
     }
     if (disengage) {
+        FootRoad::NativeSetHoldLatched(false);
         Disable();
         return;
     }
-    if (!engaged) {
-        return;
-    }
 
-    // State machine with the recovered semantics. Off-road counts as a
-    // failed sample: the native OnPress phase-5 clears the active flag and
-    // the follow deactivates (prompt hidden).
-    const bool manual = g_manualInput.exchange(false);
-    const bool failed = haveSample && (sample.failed || !sample.hasHit);
-    const bool chat = IsChatFollowActive();
-
-    // Manual WASD: camera re-couples to travel; held >3s deactivates.
+    // Manual WASD: held >3s deactivates (user requirement; the native
+    // phases already handle the graceful interruption/falloff).
     const bool manualHeld = IsManualHeld();
     if (manualHeld) {
         g_manualHeldTime += dt;
         if (g_manualHeldTime >= kManualHoldDeactivateSeconds) {
             Log::Write("[AutoWalk] FollowController: deactivated after 3s of manual input.");
+            FootRoad::NativeSetHoldLatched(false);
             Disable();
             return;
         }
@@ -432,37 +405,35 @@ void Tick()
         g_manualHeldTime = 0.0f;
     }
 
-    const bool followActive = NativeMagnetism::TickStateMachine(
-        g_state, dt, *cvars, manual, chat, failed, false);
-
-    if (!followActive) {
-        ReleaseForward();
-        g_phase.store(Phase::Disabled);
-        UpdatePromptFlags(false, false, false);
-        Log::Write("[AutoWalk] FollowController: deactivated (state machine).");
+    if (!latched) {
+        if (g_phase.load() != Phase::Disabled) {
+            ReleaseForward();
+            g_phase.store(Phase::Disabled);
+            Log::Write("[AutoWalk] FollowController: native follow released.");
+        }
+        UpdatePromptFlags(onRoad, false, false);
         return;
     }
 
-    const bool following = onRoad;
-    UpdatePromptFlags(following, true, manualHeld);
+    // Following: the native state owns the decision; this side mirrors it.
+    const bool following = onRoad && FootRoad::NativeMagnetismLive();
+    UpdatePromptFlags(onRoad, latched, manualHeld);
 
     // Steering: the vanilla mounted seam (HorseFlatYaw_To_RiderLookAccum,
-    // 0x1806CCAF8 / REL 37998). SmoothCD chases the native road yaw command;
-    // the per-frame delta of the smoothed yaw is pumped into Henry's
-    // m_lookAngleAccum (C_ActorPhysicsState+0x88). The physics-state tick
-    // folds it into m_lookAngles, the first-person compose reads
+    // 0x1806CCAF8 / REL 37998). SmoothCD chases the native road yaw command
+    // (m_magnetYaw); the per-frame delta of the smoothed yaw is pumped into
+    // Henry's m_lookAngleAccum (C_ActorPhysicsState+0x88). The physics-state
+    // tick folds it into m_lookAngles, the first-person compose reads
     // m_viewRotation, and the on-foot body follows the view -- exactly the
     // mounted pipeline, with the mouse untouched on the request channel.
     if (following && !manualHeld) {
-        // Sample-acceptance gate recovered from SetHoldLatchedImpl: a sample
-        // is only accepted when within RoadMagnetismEnterAngle of the current
-        // command. The standalone facade flaps between two candidate road
-        // directions every other sample; without this native gate the
-        // smoother's sign-flip reset zeroes the command and steering dies.
+        // Native enter-angle acceptance (SetHoldLatchedImpl, auto mode):
+        // rejects any residual facade flap far from the current command.
+        const float rawTarget = FootRoad::NativeMagnetYaw();
         if (!g_targetValid ||
-            std::abs(WrapPi(sample.yawFrom - g_targetYaw)) * 57.2957795f <=
+            std::abs(WrapPi(rawTarget - g_targetYaw)) * 57.2957795f <=
                 cvars->enterAngle) {
-            g_targetYaw = sample.yawFrom;
+            g_targetYaw = rawTarget;
             g_targetValid = true;
         }
 
@@ -494,14 +465,13 @@ void Tick()
     if (g_lastLog == steady_clock::time_point{} ||
         now - g_lastLog >= seconds(2)) {
         g_lastLog = now;
-        Log::Write(std::string("[AutoWalk] follow: flags=") +
-                   std::to_string(g_state.flags) +
-                   " hasHit=" + std::to_string(haveSample && sample.hasHit) +
-                   " yawFrom=" + std::to_string(sample.yawFrom) +
+        Log::Write(std::string("[AutoWalk] follow: latched=") +
+                   std::to_string(latched) +
+                   " hasHit=" + std::to_string(onRoad) +
+                   " live=" + std::to_string(FootRoad::NativeMagnetismLive()) +
+                   " magnetYaw=" + std::to_string(FootRoad::NativeMagnetYaw()) +
                    " smoothed=" + std::to_string(g_smoother.smoothed) +
-                   " accum=" + std::to_string(GetPhysicsState() ? GetPhysicsState()->m_lookAngleAccum.z : 0.0f) +
-                   " deact=" + std::to_string(g_state.deactivateTime) +
-                   " react=" + std::to_string(g_state.reactivateTime));
+                   " accum=" + std::to_string(GetPhysicsState() ? GetPhysicsState()->m_lookAngleAccum.z : 0.0f));
     }
 }
 

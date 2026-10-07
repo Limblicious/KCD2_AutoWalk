@@ -150,7 +150,182 @@ PersistentStandaloneFacade& GetPersistentFacade()
     return s_facade;
 }
 
+// --- Native-tick support fabrications -------------------------------------
+
+// The native gates only need the RIDER identity from the sync object
+// (FUN_1806CCCD4 chain: hd property GetValue -> sync -> vf[0x78] GetRider).
+void* NativeGetRiderStub(void*)
+{
+    auto* framework = CCryAction::GetInstance();
+    return framework ? framework->GetClientActor() : nullptr;
+}
+
+// I_HorseMoveAdapter pass-throughs: rider yaw/move always neutral, so the
+// armed/deactivate phases never engage and the manual blend is identity.
+float NativeApplyTurnSlowdownStub(float speed, const wh::entitymodule::S_HorseData*)
+{
+    return speed;
+}
+float NativeScaleDesiredSpeedStub(float speed, const wh::entitymodule::S_HorseData*)
+{
+    return speed;
+}
+bool NativeAlwaysTrueStub(const void*)
+{
+    return true;
+}
+void NativeGetStickMagAndTurnStub(const void*, std::int32_t* mag, std::int32_t* turn)
+{
+    if (mag) *mag = 0;
+    if (turn) *turn = 0;
+}
+
+constexpr REL::ID kIdRoadFollowTick{56405};       // sub_180A4E5AC
+constexpr REL::ID kIdModelPropertyGetValue{162514}; // sub_181A7DE10
+
+// Native tick ABI: (rcx = this, xmm1 = dt, r8 = unused, r9 = sample out) --
+// the tick forwards r9 into the wrapper's sampler call.
+using RoadFollowTickFn = bool (*)(void*, float, void*, void*);
+
+struct NativeSupportTables {
+    void* syncVtbl[24]{};   // I_HorseRiderSync -- only [15] GetRider is used
+    void* moveVtbl[7]{};    // I_HorseMoveAdapter
+    void* propVtbl[4]{};    // C_ModelProperty -- only [1] GetValue is used
+    void* syncObj[1]{};     // { syncVtbl }
+    void* moveObj[1]{};     // { moveVtbl }
+    bool ready = false;
+};
+
+NativeSupportTables& GetSupportTables()
+{
+    static NativeSupportTables s_tables;
+    return s_tables;
+}
+
+void EnsureSupportTables()
+{
+    auto& t = GetSupportTables();
+    if (t.ready) {
+        return;
+    }
+    t.syncVtbl[15] = &NativeGetRiderStub;
+    t.moveVtbl[0] = &NativeApplyTurnSlowdownStub;
+    t.moveVtbl[1] = &NativeScaleDesiredSpeedStub;
+    t.moveVtbl[2] = &NativeAlwaysTrueStub;
+    t.moveVtbl[3] = &NativeGetStickMagAndTurnStub;
+    t.propVtbl[1] = REL::Relocation<void*>(kIdModelPropertyGetValue).get();
+    t.syncObj[0] = t.syncVtbl;
+    t.moveObj[0] = t.moveVtbl;
+    t.ready = t.propVtbl[1] != nullptr;
+}
+
 } // namespace
+
+bool EnsureNativeRoadFollow()
+{
+    EnsureSupportTables();
+    if (!GetSupportTables().ready) {
+        Log::Write("[AutoWalk] footRoadNative: model-property GetValue unresolved.");
+        return false;
+    }
+    if (!RefreshStandaloneFacade()) {
+        return false;
+    }
+
+    auto& facade = GetPersistentFacade();
+    auto* hd = reinterpret_cast<wh::entitymodule::S_HorseData*>(&facade.horseData);
+    auto& t = GetSupportTables();
+
+    // C_ModelProperty base: vptr @0, value (the sync pointer) @+0x08.
+    *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(hd) + 0x00) = t.propVtbl;
+    *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(hd) + 0x08) = t.syncObj;
+    // Pass-through move adapter: keeps the native on-press phases neutral.
+    *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(hd) + 0x100) = t.moveObj;
+
+    Log::Write("[AutoWalk] footRoadNative: facade wired (property vtable, sync, adapter).");
+    return true;
+}
+
+bool NativeFollowReady()
+{
+    auto& facade = GetPersistentFacade();
+    const auto rf = reinterpret_cast<wh::entitymodule::S_HorseRoadFollow*>(&facade.roadFollow);
+    return facade.initialized && rf->m_pMagnetism != nullptr;
+}
+
+bool TickNativeRoadFollow(float dt, FootRoadProbe& out)
+{
+    out = FootRoadProbe{};
+
+    auto& facade = GetPersistentFacade();
+    if (!facade.initialized) {
+        return false;
+    }
+    out.facadeBuilt = true;
+
+    auto* rf = reinterpret_cast<wh::entitymodule::S_HorseRoadFollow*>(&facade.roadFollow);
+    wh::entitymodule::S_HorseMagnetismSample sample{};
+
+    const auto fn = REL::Relocation<RoadFollowTickFn>(kIdRoadFollowTick).get();
+    if (!fn) {
+        Log::Write("[AutoWalk] footRoadNative: tick unresolved.");
+        return false;
+    }
+    fn(rf, dt, nullptr, &sample);
+
+    CopySampleIntoProbe(sample, true, out);
+    return true;
+}
+
+bool NativeLatched()
+{
+    auto& facade = GetPersistentFacade();
+    if (!facade.initialized) {
+        return false;
+    }
+    return reinterpret_cast<wh::entitymodule::S_HorseRoadFollow*>(&facade.roadFollow)
+               ->m_latched != 0;
+}
+
+bool NativeMagnetismLive()
+{
+    auto& facade = GetPersistentFacade();
+    if (!facade.initialized) {
+        return false;
+    }
+    return reinterpret_cast<wh::entitymodule::S_HorseData*>(&facade.horseData)
+               ->m_magnetismLive != 0;
+}
+
+float NativeMagnetYaw()
+{
+    auto& facade = GetPersistentFacade();
+    if (!facade.initialized) {
+        return 0.0f;
+    }
+    return reinterpret_cast<wh::entitymodule::S_HorseData*>(&facade.horseData)
+        ->m_magnetYaw;
+}
+
+void NativeSetHoldLatched(bool latched)
+{
+    auto& facade = GetPersistentFacade();
+    if (!facade.initialized) {
+        return;
+    }
+    auto* rf = reinterpret_cast<wh::entitymodule::S_HorseRoadFollow*>(&facade.roadFollow);
+    auto* ctrl = rf->m_pMagnetism;
+    if (!ctrl) {
+        Log::Write("[AutoWalk] footRoadNative: latch requested but no controller yet.");
+        return;
+    }
+    // vf[0x18] = SetHoldLatched(ctrl, latched) -- bit-trivial for the
+    // on-press controller; extra args match the native tick's own call.
+    using SetHoldLatchedFn = bool (*)(void*, bool, bool, void*);
+    const auto fn = *reinterpret_cast<SetHoldLatchedFn*>(
+        *reinterpret_cast<std::uintptr_t*>(ctrl) + 0x18);
+    fn(ctrl, latched, false, nullptr);
+}
 
 FootRoadProbe ProbeRoadSample(float searchDistance)
 {

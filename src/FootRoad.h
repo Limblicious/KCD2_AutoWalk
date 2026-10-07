@@ -63,6 +63,24 @@ wh::entitymodule::S_HorseRoadFollow* GetStandaloneRoadFollow();
 // no player/entity is available.
 bool RefreshStandaloneFacade();
 
+// --- Native road-follow tick on the standalone facade ---------------------
+// The full recovered chain (S_HorseData_Update -> S_HorseRoadFollow_Tick
+// REL 56405 -> wrapper -> builder+sampler + the native on-press controller)
+// runs verbatim against the facade: road-persistence, hysteresis, prompt
+// gates and the yaw command (S_HorseData.m_magnetYaw) are all native.
+// Fabricated support objects: an I_HorseRiderSync whose GetRider returns the
+// real player (the native gates only need the rider identity), a pass-through
+// I_HorseMoveAdapter (rider yaw always neutral so the armed/deactivate path
+// never engages), and a C_ModelProperty vtable whose GetValue is the game's
+// own (REL 162514).
+bool EnsureNativeRoadFollow();      // one-time tables + facade wiring; log-gated
+bool NativeFollowReady();           // facade + native controller exist
+bool TickNativeRoadFollow(float dt, FootRoadProbe& out);  // runs the native tick
+bool NativeLatched();               // rf.m_latched (the native follow state)
+bool NativeMagnetismLive();         // hd.m_magnetismLive
+float NativeMagnetYaw();            // hd.m_magnetYaw (the native yaw command)
+void NativeSetHoldLatched(bool latched);  // native controller vf[0x18] latch
+
 std::string Describe(const FootRoadProbe& probe);
 
 } // namespace AutoWalk::FootRoad
