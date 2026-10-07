@@ -74,9 +74,13 @@ void SmoothCD(YawSmoother& s, float target, float dt, const FrameCVars& cvars)
 
     if (kCdEps < std::abs(target - prev)) {
         const float omega = f7 * cvars.rotationMax;
-        f6 = prev + (target - prev); // == target
-        if (f6 <= -omega) f6 = -omega;
-        if (omega <= f6) f6 = omega;
+        // Rate-limit the STEP toward the target (the vanilla clamps the
+        // per-frame advance, NOT the absolute position): f6 = the advanced
+        // position the critically-damped state chases.
+        float step = target - prev;
+        if (step <= -omega) step = -omega;
+        if (omega <= step) step = omega;
+        f6 = prev + step;
 
         const float speed = (target == 0.0f) ? cvars.smoothOutSpeed
                                              : cvars.smoothInSpeed;

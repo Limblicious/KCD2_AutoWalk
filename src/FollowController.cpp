@@ -427,15 +427,12 @@ void Tick()
     // m_viewRotation, and the on-foot body follows the view -- exactly the
     // mounted pipeline, with the mouse untouched on the request channel.
     if (following && !manualHeld) {
-        // Native enter-angle acceptance (SetHoldLatchedImpl, auto mode):
-        // rejects any residual facade flap far from the current command.
-        const float rawTarget = FootRoad::NativeMagnetYaw();
-        if (!g_targetValid ||
-            std::abs(WrapPi(rawTarget - g_targetYaw)) * 57.2957795f <=
-                cvars->enterAngle) {
-            g_targetYaw = rawTarget;
-            g_targetValid = true;
-        }
+        // The native sample command is accepted directly while following:
+        // the recovered enter-angle gate (SetHoldLatchedImpl gate 5) applies
+        // only when NOT latched (engagement); while latched the samples flow.
+        const float target = FootRoad::NativeMagnetYaw();
+        g_targetYaw = target;
+        g_targetValid = true;
 
         NativeMagnetism::SmoothCD(g_smoother, g_targetYaw, dt, *cvars);
 
@@ -471,6 +468,7 @@ void Tick()
                    " live=" + std::to_string(FootRoad::NativeMagnetismLive()) +
                    " magnetYaw=" + std::to_string(FootRoad::NativeMagnetYaw()) +
                    " smoothed=" + std::to_string(g_smoother.smoothed) +
+                   " rotMax=" + std::to_string(cvars->rotationMax) +
                    " accum=" + std::to_string(GetPhysicsState() ? GetPhysicsState()->m_lookAngleAccum.z : 0.0f));
     }
 }
