@@ -227,6 +227,75 @@ Key REL IDs used (Steam 1.5.6):
 | S_HorseRoadFollow::Tick (sub_180A4E5AC) | 56405 |
 | C_RiderPlayerInput::Update (precedent, BetterHorseHandling) | 56411 |
 
+## Native reconstruction (Ghidra 12.1.4, staged .re copy)
+
+Recovered from the exact staged binary via Ghidra + GhidraMCP, seeded with
+libKCD2/upstream RE findings. Struct types live in the Ghidra project under
+`/AutoWalk/`.
+
+### Layout correction vs seeds
+
+`S_AutoController` (0x48): the seed manifest placed `m_path` at +0x20. The
+ctor and phase-4/phase-5 handlers prove the path vector is at **+0x08**
+({begin,end,capacity} at +0x08/+0x10/+0x18); +0x20 is a second reserved
+vector region initialized with the same reserve helper.
+
+### Function: S_AutoController::Tick
+- VA: 0x1829F2558; REL 554715 slot 2 (vtable 0x183EAAE18)
+- Recovered signature: `void Tick(AW_S_AutoController* this, S_HorseMagnetismSample* sample, int phase, float dt)`
+- Branches: phase 1 -> countdown `m_timer` (clamped at 0) then `TickPhase1`; phase 5 -> clear path vector (end=begin); all other phases no-op.
+- Output: none directly; side effects via phase-1 body.
+
+### Function: S_AutoController::TickPhase1 (0x1829F16FC)
+- Inputs: `this` (controller), implicit `gEnv->vf[3]()` current time.
+- Persistent reads: m_path {begin,end,cap}; m_flag44; m_pHorseData(+0xF8 C_Horse; +0x7A0 road state; +0x124 backwards handled elsewhere).
+- Persistent writes: appends `{m_flag44, now}` records (8-byte: byte flag@0, float time@4) when `dtSinceLastRecord > 0.2f` (const 0x3E4CCCCD); prunes records older than `frameHelper+0x98` (RoadMagnetismSnapTime) via lower_bound; clears the path when the gate fails.
+- Gate: `Horse_ModelQuery(horse) == false && RoadState_GetIndex(horse+0x7A0, tag) != 4`.
+- Fallback dt when path empty: FLT_MAX (0x7F7FFFFF).
+- Callees: HorseData_GetTag, RoadState_GetIndex, Horse_ModelQuery (0x181E7D660, jumps to actor-model vf[0x298](1)), PathHistory_PruneOlderThan, vector push helpers, vector erase helper.
+- Semantics: maintains a timestamp/flag history of road-latch moments inside the SnapTime window; used by the flick scorer and enter/remain checks.
+
+### Function: S_AutoController::SetHoldLatched (slot 1, 0x1829F1C40 -> SetHoldLatchedImpl 0x1829F1C70)
+- Recovered signature: `bool SetHoldLatched(AW_S_AutoController* this, bool latched, bool hit, S_HorseMagnetismSample* sample)` (4 args; earlier header mapping was wrong).
+- Writes: m_flag44 = hit.
+- Gates (any failure returns false):
+  1. horse move adapter valid (`HorseData_GetTag` chain, 0x1806CCCD4/0x1804A8CE0);
+  2. **chat-follow inactive** (`[whGlobal+8]->vf[0x200]() -> [..+0xCE8] -> vf[8]` — C_Player::m_pChatFollowManager follow check);
+  3. if not latched: builds a vector {pos (IEntity vf[0x170] GetWorldPos), + m_along when hit} and runs RoadSnap_TestVector (0x180A4E208) — non-zero result fails;
+  4. rider input: `m_pMove(+0x100)->vf[0x18]()` yields a yaw; `|wrap(yaw)|*deg < frame+0x88` (RoadMagnetismRemainAngle);
+  5. if hit && !latched: `min(|yawFrom-m_magnetYaw|,|yawTo-m_magnetYaw|)*deg` must be `<= frame+0x84` (RoadMagnetismEnterAngle);
+  6. walks path history backward within the SnapTime window; for each flagged record: PathHistory_FlickScore returns 4 -> fail; if not backwards (+0x124 == 0): Road_SnapChooser(0x060B0A00, this) non-zero -> **return true**.
+- Semantics: exact enter/remain hysteresis; the native "hold E" latch acceptance.
+
+### Function: S_HorseRoadFollow::Tick (0x180A4E5AC, REL 56405)
+- Recovered signature: `bool Tick(AW_S_HorseRoadFollow* this, float dt)` (returns m_latched).
+- Flow (matches the earlier hand-recovered call sequence exactly, plus the two extra publish helpers):
+  1. HorseRoadFollow_RebuildControllerMode(this) — mode 0/1/2 controller selection from options;
+  2. controller absent -> return latched;
+  3. zero a stack S_HorseMagnetismSample (0x38);
+  4. `dist = ctrl->GetRoadDistance(m_latched)`;
+  5. `hit = HorseRoadSample_Wrapper(this, dist, &sample)`;
+  6. `ctrl->Tick(&sample, 0, dt)`;
+  7. `ok = ctrl->SetHoldLatched(m_latched, hit, &sample)`;
+  8. if !hit || !ok: stick reset (m_stickDelta=0; 0x180A03994(&stick,2,&static)); m_magnetismLive=0; if latched {pathA clear; Tick(5)}; latched=0; Tick(3);
+  9. else: if !latched Tick(4); latched=1; Tick(2); then HorseRoadFollow_UpdateTurnParams, HorseRoadFollow_PushPathB, HorseRoadFollow_PublishMagnetism;
+  10. Tick(1); return m_latched.
+- Persistent writes: m_latched; m_stick; m_pathA; via helpers: m_magnetismLive/m_magnetHit/m_magnetYaw (+0x130 is sample.m_yawFrom — a command, not world heading), m_fastStop(+0x10B), m_pathB, horse turn-rate params.
+
+### Function: HorseRoadFollow_PublishMagnetism (0x180A4DE5C)
+- Writes: +0x138 m_magnetismLive = sample.m_hasHit; +0x13C m_magnetHit = sample.m_hit; +0x130 m_magnetYaw = sample.m_yawFrom.
+- Turn-class selection: picks min id in {2,1,0} whose frame threshold (+0xB0/+0xB4/+0xB8 = Dash/Sprint/Run MaxDegree cvars) exceeds `|wrap(yawFrom-yawTo)|*deg`; then conditionally writes turn-rate params through `FUN_180a5019c(S_HorseData+0x148, ...)` (horse movement-SM boundary).
+
+### Function: HorseRoadFollow_PushPathB (0x180A4E39C)
+- Appends road-point ids from (sample.m_pFrom, m_pTo) into m_pathB (int32 vector) via 0x180A0B38C; caps history to the last 10 entries.
+- m_pathB = backtrack history.
+
+### Function: HorseRoadFollow_UpdateTurnParams (0x180A4DFF4)
+- Builds a vector from sample.m_along (plus a seeded {3}); runs RoadSnap_TestVector; on success sets **m_fastStop (+0x10B) = 1** (sharp-corner slowdown flag).
+
+### Function: PathHistory_PruneOlderThan (0x181ECA180)
+- lower_bound over 8-byte {flag,time} records: first index with `record.time >= now - window`.
+
 ## Evidence standard
 
 For each native function/hook record game build, module, REL ID/signature, prototype, fields read/written, validation, failure behavior, and local runtime evidence.
