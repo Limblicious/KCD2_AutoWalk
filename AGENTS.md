@@ -33,7 +33,7 @@ If the decompiler can expose the code path, recover it first.
 
 ## Required reverse-engineering workflow
 
-Use a local copy of the exact supported `WHGame.dll` in IDA/Hex-Rays, preferably through an MCP-connected workstation agent.
+Use a local copy of the exact supported `WHGame.dll` in **Ghidra 12.1.4**, with **GhidraMCP v0.9.0** connected to OpenCode.
 
 For each target function:
 
@@ -106,7 +106,8 @@ Do not float against upstream during normal builds.
 - Seed the decompiler with existing libKCD2 RTTI, vtables, REL IDs, types, and known names.
 - Every mutation hook fails closed.
 - Never "try an address and see if it crashes."
-- Work on a copied/local binary for decompilation; never alter the installed `WHGame.dll`.
+- Work on a copied/local binary inside an ignored Ghidra project; never alter the installed `WHGame.dll`.
+- Keep Ghidra/GhidraMCP local-only (`127.0.0.1`); do not expose the MCP port to the LAN/Internet.
 
 ## Architecture constraints
 
