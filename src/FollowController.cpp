@@ -48,8 +48,6 @@ std::atomic<bool> g_manualInput{false};
 float g_manualHeldTime = 0.0f;
 constexpr float kManualHoldDeactivateSeconds = 3.0f;
 
-PromptState g_lastPromptState = PromptState::Hidden;
-
 // True while the current PostInputEvent call is our own synthetic W press.
 std::atomic<bool> g_syntheticPressInFlight{false};
 
@@ -137,16 +135,18 @@ void RotateEntityYaw(float theta)
     tm[5] = f.second;
 }
 
+// User-held W tracking: the listener sees fresh (untagged) W presses and
+// releases; the synthetic hold is tagged and ignored.
+std::atomic<bool> g_userWHeld{false};
+
 bool IsManualHeld()
 {
-    auto* env = SSystemGlobalEnvironment::GetInstance();
-    if (!env || !env->pInput) {
-        return false;
-    }
-    return env->pInput->InputState("w", Offsets::eIS_Down) ||
-           env->pInput->InputState("a", Offsets::eIS_Down) ||
-           env->pInput->InputState("s", Offsets::eIS_Down) ||
-           env->pInput->InputState("d", Offsets::eIS_Down);
+    // Never synthesized by the plugin: a held A/S/D in the input queue is
+    // always the player. W is tracked through the listener above.
+    return g_userWHeld.load() ||
+           InputSeam::IsKeyHeld(Offsets::eKI_A) ||
+           InputSeam::IsKeyHeld(Offsets::eKI_S) ||
+           InputSeam::IsKeyHeld(Offsets::eKI_D);
 }
 
 bool IsChatFollowActive()
@@ -225,6 +225,11 @@ public:
         // for player input while we hold W synthetically.
         if (event.state == Offsets::eIS_Pressed) {
             g_manualInput.store(true);
+            if (key == Offsets::eKI_W) {
+                g_userWHeld.store(true);
+            }
+        } else if (event.state == Offsets::eIS_Released && key == Offsets::eKI_W) {
+            g_userWHeld.store(false);
         }
         return false; // never consume
     }
@@ -281,7 +286,10 @@ void RegisterPromptActions()
         return;
     }
 
-    CryStringT<char> ctx("foot_path_follow");
+    // The context must be the ACTIONMAP name the rows live in (defaultProfile/
+    // defaultActionHelp "player"), otherwise the registry lookup misses and
+    // the bind is silently skipped.
+    CryStringT<char> ctx("player");
     CryStringT<char> activate("foot_magnetism_activate");
     CryStringT<char> deactivate("foot_magnetism_deactivate");
 
@@ -291,27 +299,55 @@ void RegisterPromptActions()
     actionSets->RegisterAction(
         ctx, deactivate,
         std::function<void()>([]() { FollowController::RequestDisengage(); }), 1);
-    Log::Write("[AutoWalk] FollowController: prompt actions registered.");
+    const bool regA = actionSets->IsRegistered(ctx, activate);
+    const bool regD = actionSets->IsRegistered(ctx, deactivate);
+    Log::Write(std::string("[AutoWalk] FollowController: prompt actions registered (rows present: activate=") +
+               std::to_string(regA) + " deactivate=" + std::to_string(regD) + ").");
 }
 
-void SetPromptState(PromptState state)
+// Mirror of the native hint updater (S_AutoController prompt tick, the
+// horse_mounted analog): disable-reason + enabled + visible per row.
+void UpdatePromptFlags(bool onRoad, bool engaged, bool manualHeld)
 {
-    if (state == g_lastPromptState) {
-        return;
-    }
-    g_lastPromptState = state;
-
     auto* actionSets = GetActionSets();
     if (!actionSets) {
         return;
     }
-    CryStringT<char> ctx("foot_path_follow");
+
+    const bool chatFollow = IsChatFollowActive();
+    const bool showActivate = onRoad && !engaged && !chatFollow && !manualHeld;
+    const bool showDeactivate = engaged && !chatFollow && !manualHeld;
+
+    static int lastShowA = -1;
+    static int lastShowD = -1;
+    if (lastShowA != showActivate || lastShowD != showDeactivate) {
+        lastShowA = showActivate;
+        lastShowD = showDeactivate;
+        Log::Write(std::string("[AutoWalk] prompt flags: activate=") +
+                   std::to_string(showActivate) +
+                   " deactivate=" + std::to_string(showDeactivate) +
+                   " onRoad=" + std::to_string(onRoad) +
+                   " engaged=" + std::to_string(engaged) +
+                   " manual=" + std::to_string(manualHeld) +
+                   " chat=" + std::to_string(chatFollow));
+    }
+
+    CryStringT<char> ctx("player");
     CryStringT<char> activate("foot_magnetism_activate");
     CryStringT<char> deactivate("foot_magnetism_deactivate");
-    actionSets->SetActionVisible(
-        ctx, activate, state == PromptState::Activate ? 1 : 0, 1);
-    actionSets->SetActionVisible(
-        ctx, deactivate, state == PromptState::Deactivate ? 1 : 0, 1);
+
+    // [7] disable reason on the activate row (by value, callee destroys).
+    CryStringT<char> reason(chatFollow ? "ui_magnetism_in_follow"
+                                       : "ui_magnetism_not_on_path");
+    actionSets->SetActionDisableReason(ctx, activate, reason, 1);
+
+    // [4] enabled state.
+    actionSets->SetActionEnabled(ctx, activate, showActivate, 1);
+    actionSets->SetActionEnabled(ctx, deactivate, showDeactivate, 1);
+
+    // [5] visible state.
+    actionSets->SetActionVisible(ctx, activate, showActivate, 1);
+    actionSets->SetActionVisible(ctx, deactivate, showDeactivate, 1);
 }
 
 void RequestEngage()
@@ -341,7 +377,7 @@ void Disable()
     ReleaseForward();
     g_state.flags = 0;
     g_phase.store(Phase::Disabled);
-    SetPromptState(PromptState::Hidden);
+    UpdatePromptFlags(false, false, false);
     Log::Write("[AutoWalk] FollowController: disabled.");
 }
 
@@ -366,7 +402,7 @@ void Tick()
             g_phase.store(Phase::Disabled);
             Log::Write("[AutoWalk] FollowController: stopped (player unavailable or mounted).");
         }
-        SetPromptState(PromptState::Hidden);
+        UpdatePromptFlags(false, false, false);
         return;
     }
 
@@ -383,7 +419,6 @@ void Tick()
     // Native tuning values.
     const NativeMagnetism::FrameCVars* cvars = nullptr;
     if (!NativeMagnetism::RefreshFrameCVars(cvars) || !cvars) {
-        SetPromptState(PromptState::Hidden);
         return;
     }
 
@@ -407,11 +442,7 @@ void Tick()
     const bool onRoad = haveSample && sample.hasHit;
 
     if (g_phase.load() == Phase::Disabled && !engaged) {
-        if (onRoad) {
-            SetPromptState(PromptState::Activate);
-        } else {
-            SetPromptState(PromptState::Hidden);
-        }
+        UpdatePromptFlags(onRoad, false, false);
     }
 
     // Engagement via the native hold-E dispatch.
@@ -458,19 +489,13 @@ void Tick()
     if (!followActive) {
         ReleaseForward();
         g_phase.store(Phase::Disabled);
-        SetPromptState(PromptState::Hidden);
+        UpdatePromptFlags(false, false, false);
         Log::Write("[AutoWalk] FollowController: deactivated (state machine).");
         return;
     }
 
     const bool following = onRoad;
-    if (following && !manualHeld) {
-        SetPromptState(PromptState::Deactivate);
-    } else if (!following) {
-        SetPromptState(PromptState::Activate);
-    } else {
-        SetPromptState(PromptState::Hidden);
-    }
+    UpdatePromptFlags(following, true, manualHeld);
 
     // Steering: SmoothCD toward the native road yaw command; rotate the BODY
     // (entity world TM) so the camera stays decoupled like on horseback.

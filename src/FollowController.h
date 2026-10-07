@@ -16,11 +16,11 @@ void Disable();
 void Reset();
 
 // Native hold-E prompt integration: registers the two foot-magnetism actions
-// on the game's contextual action system (I_ActionSets) and toggles the
-// helpbar rows (activate while idle on a road, deactivate while following).
+// on the game's contextual action system (I_ActionSets) and drives the
+// helpbar rows exactly like the mounted prompt updater (disable reason +
+// enabled + visible per row).
 void RegisterPromptActions();
-enum class PromptState { Hidden, Activate, Deactivate };
-void SetPromptState(PromptState state);
+void UpdatePromptFlags(bool onRoad, bool engaged, bool manualHeld);
 
 // Engagement callbacks wired to the native hold-E dispatch.
 void RequestEngage();
