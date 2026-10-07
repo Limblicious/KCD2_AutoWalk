@@ -1,0 +1,19 @@
+{
+  "ghidra": {
+    "version": "12.1.4",
+    "release_tag": "Ghidra_12.1.4_build",
+    "asset": "ghidra_12.1.4_PUBLIC_20260921.zip",
+    "sha256": "ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db",
+    "url": "https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.4_build"
+  },
+  "ghidra_mcp": {
+    "repository": "themixednuts/GhidraMCP",
+    "version": "0.9.0",
+    "release_tag": "v0.9.0",
+    "asset": "GhidraMCP-0.9.0.zip",
+    "sha256": "6caa1c1af7643851d4ee2c88ee5137189159957307fbd26de32db69852c552ba",
+    "endpoint": "http://127.0.0.1:8080/mcp",
+    "url": "https://github.com/themixednuts/GhidraMCP/releases/tag/v0.9.0"
+  },
+  "java": { "major": 21 }
+}
