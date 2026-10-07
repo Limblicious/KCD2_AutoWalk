@@ -15,6 +15,10 @@
 #include "entitymodule/C_Player.h"
 #include "entitymodule/C_RiderPlayerControl.h"
 #include "entitymodule/C_RiderPlayerInput.h"
+#include "game/C_CameraManager.h"
+#include "game/S_GameContext.h"
+#include "playermodule/C_PlayerModule.h"
+#include "playermodule/I_ActionSets.h"
 
 namespace AutoWalk::FollowController {
 namespace {
@@ -39,7 +43,35 @@ bool g_cachedSampleValid = false;
 
 // User-input signals gathered by the input listener each frame.
 std::atomic<bool> g_engageRequested{false};
+std::atomic<bool> g_disengageRequested{false};
 std::atomic<bool> g_manualInput{false};
+float g_manualHeldTime = 0.0f;
+constexpr float kManualHoldDeactivateSeconds = 3.0f;
+
+PromptState g_lastPromptState = PromptState::Hidden;
+bool g_cameraMountedStyle = false;
+
+// Camera mode switch: the mounted rider camera composes from the look state
+// (mouse) independent of the body, exactly like on horseback.
+void SetCameraMountedStyle(bool on)
+{
+    auto* ctx = wh::game::S_GameContext::GetInstance();
+    auto* cam = ctx
+        ? *reinterpret_cast<wh::game::C_CameraManager**>(
+              reinterpret_cast<std::uintptr_t>(ctx) + 0x38)
+        : nullptr;
+    if (!cam) {
+        return;
+    }
+    if (on == g_cameraMountedStyle) {
+        return;
+    }
+    auto* active = reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(cam) + 0x30);
+    void* firstPerson = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(cam) + 0x1E8);
+    void* rider = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(cam) + 0x3C0);
+    *active = on ? rider : firstPerson;
+    g_cameraMountedStyle = on;
+}
 
 // True while the current PostInputEvent call is our own synthetic W press.
 std::atomic<bool> g_syntheticPressInFlight{false};
@@ -75,9 +107,12 @@ bool TryGetPlayerYaw(float& yawOut)
     return true;
 }
 
-// Henry's C_ActorPhysicsState look accumulator (+0x238 -> +0x88), the same
-// seam the mounted horse glue (REL 37998) writes to.
-float* GetLookAccumulator()
+// Henry's C_ActorPhysicsState (C_Actor+0x238). The on-foot first-person
+// camera compose builds the view from the physics-state look angles; the
+// entity world TM (entity+0x58) is the BODY the movement consumes. Steering
+// rotates the body only, leaving the camera on the look state (mounted-style
+// decoupling).
+float* GetLookAngles()
 {
     auto* framework = CCryAction::GetInstance();
     auto* player = framework
@@ -91,7 +126,50 @@ float* GetLookAccumulator()
     if (!state) {
         return nullptr;
     }
-    return reinterpret_cast<float*>(reinterpret_cast<std::uintptr_t>(state) + 0x88);
+    return reinterpret_cast<float*>(reinterpret_cast<std::uintptr_t>(state) + 0x08);
+}
+
+// Entity world TM (Matrix34: right@0..2, tx@3, forward@4..6, ty@7, up@8..10, tz@11).
+float* GetEntityWorldTM()
+{
+    auto* framework = CCryAction::GetInstance();
+    auto* entity = framework ? framework->GetClientEntity() : nullptr;
+    if (!entity) {
+        return nullptr;
+    }
+    return reinterpret_cast<float*>(reinterpret_cast<std::uintptr_t>(entity) + 0x58);
+}
+
+// Rotates the entity world TM around world Z (yaw) by 'theta' radians.
+void RotateEntityYaw(float theta)
+{
+    float* tm = GetEntityWorldTM();
+    if (!tm) {
+        return;
+    }
+    const float c = std::cos(theta);
+    const float s = std::sin(theta);
+    const auto rot = [&](float x, float y) {
+        return std::pair<float, float>(x * c - y * s, x * s + y * c);
+    };
+    auto r = rot(tm[0], tm[1]);
+    tm[0] = r.first;
+    tm[1] = r.second;
+    auto f = rot(tm[4], tm[5]);
+    tm[4] = f.first;
+    tm[5] = f.second;
+}
+
+bool IsManualHeld()
+{
+    auto* env = SSystemGlobalEnvironment::GetInstance();
+    if (!env || !env->pInput) {
+        return false;
+    }
+    return env->pInput->InputState("w", Offsets::eIS_Down) ||
+           env->pInput->InputState("a", Offsets::eIS_Down) ||
+           env->pInput->InputState("s", Offsets::eIS_Down) ||
+           env->pInput->InputState("d", Offsets::eIS_Down);
 }
 
 bool IsChatFollowActive()
@@ -154,11 +232,9 @@ public:
         }
 
         const auto key = event.keyId;
-        if (key == Offsets::eKI_E && event.state == Offsets::eIS_Pressed) {
-            g_engageRequested.store(true);
-            return false;
-        }
-
+        // Engagement is handled by the native hold-E prompt actions
+        // (foot_magnetism_activate/deactivate); the listener only tracks
+        // manual movement keys.
         const bool isMoveKey = key == Offsets::eKI_W || key == Offsets::eKI_A ||
                                key == Offsets::eKI_S || key == Offsets::eKI_D;
         if (!isMoveKey) {
@@ -167,8 +243,10 @@ public:
         if (key == Offsets::eKI_W && g_syntheticPressInFlight.load()) {
             return false; // our own press
         }
-        if (event.state == Offsets::eIS_Pressed ||
-            event.state == Offsets::eIS_Down) {
+        // Only fresh presses count as manual input: the engine re-broadcasts
+        // held keys as Down events every frame, which must not be mistaken
+        // for player input while we hold W synthetically.
+        if (event.state == Offsets::eIS_Pressed) {
             g_manualInput.store(true);
         }
         return false; // never consume
@@ -194,6 +272,21 @@ void EnsureInputListener()
     }
 }
 
+wh::playermodule::I_ActionSets* GetActionSets()
+{
+    auto* ctx = wh::game::S_GameContext::GetInstance();
+    if (!ctx) {
+        return nullptr;
+    }
+    const auto playerModule = *reinterpret_cast<void**>(
+        reinterpret_cast<std::uintptr_t>(ctx) + 0x128);
+    if (!playerModule) {
+        return nullptr;
+    }
+    return *reinterpret_cast<wh::playermodule::I_ActionSets**>(
+        reinterpret_cast<std::uintptr_t>(playerModule) + 0x60);
+}
+
 } // namespace
 
 int g_steerInvert = 1;
@@ -201,6 +294,57 @@ int g_steerInvert = 1;
 Phase GetPhase()
 {
     return g_phase.load();
+}
+
+void RegisterPromptActions()
+{
+    auto* actionSets = GetActionSets();
+    if (!actionSets) {
+        Log::Write("[AutoWalk] FollowController: I_ActionSets unavailable.");
+        return;
+    }
+
+    CryStringT<char> ctx("foot_path_follow");
+    CryStringT<char> activate("foot_magnetism_activate");
+    CryStringT<char> deactivate("foot_magnetism_deactivate");
+
+    actionSets->RegisterAction(
+        ctx, activate,
+        std::function<void()>([]() { FollowController::RequestEngage(); }), 1);
+    actionSets->RegisterAction(
+        ctx, deactivate,
+        std::function<void()>([]() { FollowController::RequestDisengage(); }), 1);
+    Log::Write("[AutoWalk] FollowController: prompt actions registered.");
+}
+
+void SetPromptState(PromptState state)
+{
+    if (state == g_lastPromptState) {
+        return;
+    }
+    g_lastPromptState = state;
+
+    auto* actionSets = GetActionSets();
+    if (!actionSets) {
+        return;
+    }
+    CryStringT<char> ctx("foot_path_follow");
+    CryStringT<char> activate("foot_magnetism_activate");
+    CryStringT<char> deactivate("foot_magnetism_deactivate");
+    actionSets->SetActionVisible(
+        ctx, activate, state == PromptState::Activate ? 1 : 0, 1);
+    actionSets->SetActionVisible(
+        ctx, deactivate, state == PromptState::Deactivate ? 1 : 0, 1);
+}
+
+void RequestEngage()
+{
+    g_engageRequested.store(true);
+}
+
+void RequestDisengage()
+{
+    g_disengageRequested.store(true);
 }
 
 void Enable()
@@ -218,14 +362,17 @@ void Enable()
 void Disable()
 {
     ReleaseForward();
+    SetCameraMountedStyle(false);
     g_state.flags = 0;
     g_phase.store(Phase::Disabled);
+    SetPromptState(PromptState::Hidden);
     Log::Write("[AutoWalk] FollowController: disabled.");
 }
 
 void Reset()
 {
     ReleaseForward();
+    SetCameraMountedStyle(false);
     g_state.flags = 0;
     g_phase.store(Phase::Disabled);
 }
@@ -284,30 +431,62 @@ void Tick()
     // State machine with the recovered semantics.
     const bool manual = g_manualInput.exchange(false);
     const bool engage = g_engageRequested.exchange(false);
+    const bool disengage = g_disengageRequested.exchange(false);
     const bool failed = haveSample && sample.failed;
     const bool chat = IsChatFollowActive();
+
+    if (disengage) {
+        Disable();
+        return;
+    }
+
+    // Manual WASD: camera re-couples to travel; held >3s deactivates.
+    const bool manualHeld = IsManualHeld();
+    if (manualHeld) {
+        g_manualHeldTime += dt;
+        if (g_manualHeldTime >= kManualHoldDeactivateSeconds) {
+            Log::Write("[AutoWalk] FollowController: deactivated after 3s of manual input.");
+            Disable();
+            return;
+        }
+    } else {
+        g_manualHeldTime = 0.0f;
+    }
 
     const bool followActive = NativeMagnetism::TickStateMachine(
         g_state, dt, *cvars, manual, chat, failed, engage);
 
-    if (!followActive || g_phase.load() == Phase::AwaitingRoad) {
-        if (!followActive) {
-            ReleaseForward();
-            g_phase.store(Phase::Disabled);
-            Log::Write("[AutoWalk] FollowController: deactivated (state machine).");
-        }
+    if (!followActive) {
+        ReleaseForward();
+        SetCameraMountedStyle(false);
+        g_phase.store(Phase::Disabled);
+        SetPromptState(PromptState::Hidden);
+        Log::Write("[AutoWalk] FollowController: deactivated (state machine).");
         return;
     }
 
-    // Steering: SmoothCD toward the native road yaw command.
-    if (haveSample && sample.hasHit) {
+    // Camera decoupling + prompt rows follow the engagement state.
+    const bool following = haveSample && sample.hasHit;
+    if (following && !manualHeld) {
+        SetCameraMountedStyle(true);
+    } else {
+        SetCameraMountedStyle(false);
+    }
+    if (following && !manualHeld) {
+        SetPromptState(PromptState::Deactivate);
+    } else if (!following) {
+        SetPromptState(PromptState::Activate);
+    } else {
+        SetPromptState(PromptState::Hidden);
+    }
+
+    // Steering: SmoothCD toward the native road yaw command; rotate the BODY
+    // (entity world TM) so the camera stays decoupled like on horseback.
+    if (following && !manualHeld) {
         NativeMagnetism::SmoothCD(g_smoother, sample.yawFrom, dt, *cvars);
 
-        // Apply the smoothed yaw delta through Henry's look accumulator —
-        // the recovered mounted-camera seam (REL 37998 equivalent).
-        float* accum = GetLookAccumulator();
         float playerYaw = 0.0f;
-        if (accum && TryGetPlayerYaw(playerYaw)) {
+        if (TryGetPlayerYaw(playerYaw)) {
             if (!g_smoother.initialized) {
                 g_smoother.initialized = true;
                 g_smoother.smoothed = playerYaw; // start aligned to the player
@@ -316,7 +495,7 @@ void Tick()
             const float delta = g_smoother.smoothed - g_prevSmoothedYaw;
             g_prevSmoothedYaw = g_smoother.smoothed;
             const float sign = g_steerInvert ? -1.0f : 1.0f;
-            accum[2] += delta * sign; // Ang3 z = yaw
+            RotateEntityYaw(delta * sign);
         }
 
         HoldForward();

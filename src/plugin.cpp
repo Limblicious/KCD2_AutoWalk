@@ -402,6 +402,7 @@ void OnMessage(KCSE::Message* message)
         AutoWalk::Log::Write("[AutoWalk] PreDataLoaded.");
         break;
     case KCSE::IMessagingInterface::kMessage_DataLoaded:
+        AutoWalk::FollowController::RegisterPromptActions();
         AutoWalk::Log::Write("[AutoWalk] DataLoaded.");
         break;
     case KCSE::IMessagingInterface::kMessage_LoadGame:
@@ -412,6 +413,7 @@ void OnMessage(KCSE::Message* message)
             AutoWalk::Log::Write("[AutoWalk] LoadGame: released held W.");
         }
         ArmFollowTick();
+        AutoWalk::FollowController::RegisterPromptActions();
         AutoWalk::FollowController::Reset();
         AutoWalk::Log::Write("[AutoWalk] LoadGame: controller reset.");
         break;

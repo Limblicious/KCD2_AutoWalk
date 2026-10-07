@@ -27,6 +27,14 @@ Copy-Item -LiteralPath (Join-Path $repoRoot "package\kcd_autowalk\mod.manifest")
 Copy-Item -LiteralPath (Join-Path $repoRoot "package\kcd_autowalk\mod.cfg") -Destination $modRoot
 Copy-Item -LiteralPath $dll -Destination (Join-Path $plugins "KCD2_AutoWalk.dll")
 
+# Mod data pak (patched vanilla action profile + help rows).
+& (Join-Path $PSScriptRoot "build-mod-data.ps1")
+if ($LASTEXITCODE -ne 0) { throw "build-mod-data.ps1 failed." }
+$dataSrc = Join-Path $repoRoot "package\kcd_autowalk\data"
+if (Test-Path -LiteralPath $dataSrc) {
+    Copy-Item -LiteralPath $dataSrc -Destination $modRoot -Recurse
+}
+
 $zip = Join-Path $distRoot "KCD2_AutoWalk-$Version.zip"
 if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
 Compress-Archive -LiteralPath $modRoot -DestinationPath $zip -CompressionLevel Optimal

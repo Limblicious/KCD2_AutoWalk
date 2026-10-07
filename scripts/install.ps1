@@ -31,6 +31,9 @@ New-Item -ItemType Directory -Force -Path (Join-Path $target "KCSE\Plugins") | O
 Copy-Item -LiteralPath (Join-Path $source "mod.manifest") -Destination $target -Force
 Copy-Item -LiteralPath (Join-Path $source "mod.cfg") -Destination $target -Force
 Copy-Item -LiteralPath (Join-Path $source "KCSE\Plugins\KCD2_AutoWalk.dll") -Destination (Join-Path $target "KCSE\Plugins\KCD2_AutoWalk.dll") -Force
+if (Test-Path -LiteralPath (Join-Path $source "data")) {
+    Copy-Item -LiteralPath (Join-Path $source "data") -Destination $target -Recurse -Force
+}
 
 Write-Host "Installed only: $target"
 Write-Host "KCSE and Address Library were verified but not modified."
