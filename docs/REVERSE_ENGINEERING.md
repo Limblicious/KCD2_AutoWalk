@@ -342,6 +342,20 @@ bit4 interrupted/armed).
 ### Function: S_OnPressController_Factory (0x181932168)
 Allocates 0x30 and calls S_OnPressController_Ctor(obj, S_HorseData*, moveAdapter) (ctor 0x1819321F8).
 
+## Phase E — Steering output chain (partial)
+
+### Function: ApplySMOutput (0x180A4EF98, REL 56418)
+- Recovered signature: `char ApplySMOutput(C_RiderPlayerInput* self, S_RiderSMOutput* smOut, S_RiderMoveRequest* request, S_HorseData* data, float dt)`.
+- dt clamped to `frame+0x16C` (ClampDelta).
+- smOut bits 0x2C route into a look-steer pair (FUN_181ECAF40 -> FUN_1829F2324(self, data, ...)) — the yaw/look application path.
+- Road class selection: smOut[0] flags (0x8 branch checks FUN_1829F1F9C "magnetism active"), then RoadState_GetIndex(C_Horse+0x7A0, &class) -> request+0x10, plus the global road-record lookup (FUN_180648438()->vf[0x40], clamped by vf[0x50]) -> request+0xC.
+- Request flags: request+4 = smOut[0]>>3&1; smOut bits 0x10/0x20/0x40 -> request+2/+3/+5; smOut[1]&1 -> request+6.
+- Final speed scalar: `request+8 = dt * frame+0x170 (RotationCoeff) * clamp(self+0xA0C * self+0xA08) * const`.
+- This is the exact vanilla boundary where the road command becomes horse movement; the foot adapter must consume the equivalent upstream value (m_magnetYaw -> view application) rather than this horse-SM request.
+
+### Steering command chain (established)
+`S_HorseRoadFollow::Tick` -> sample.m_yawFrom -> HorseRoadFollow_PublishMagnetism writes `S_HorseData.m_magnetYaw (+0x130)`. m_magnetYaw is a **yaw command, not world heading**; m_yawSmoothed (+0x128) is a SmoothCD state chasing it via HorseYaw_SmoothCD (0x18059B800, REL 31821); the sign-flip/pseudo-speed reset lives at 0x180A4FDF1. The mounted view consumes the smoothed yaw through the rider view-state glue (REL 37998) and camera centering (REL 56442) — still to be decompiled (Phase E/F continuation).
+
 ## Evidence standard
 
 For each native function/hook record game build, module, REL ID/signature, prototype, fields read/written, validation, failure behavior, and local runtime evidence.
