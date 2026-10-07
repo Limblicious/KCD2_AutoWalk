@@ -160,6 +160,8 @@ bool EnsureNativeRoadFollow()
 // Hold-E latch request: mirrors the native OnPress SetHoldLatched (bit
 // trivial); the tick latches on the next road hit and releases on a miss.
 bool g_latchPending = false;
+int g_missCounter = 0;
+constexpr int kMissGraceFrames = 20; // ~0.33s at 60 Hz; the facade gap tolerance
 
 bool NativeFollowReady()
 {
@@ -191,11 +193,15 @@ bool TickNativeRoadFollow(float dt, FootRoadProbe& out)
     CopySampleIntoProbe(sample, ok, out);
 
     // The recovered OnPress tick flow (REVERSE_ENGINEERING.md): a hit keeps
-    // the latch and publishes; a miss releases. The publish set is exactly
-    // HorseRoadFollow_PublishMagnetism's core writes (the turn-class part is
-    // the horse-SM boundary and not needed for the foot port).
+    // the latch and publishes; a miss releases. The mounted sampler rarely
+    // misses (its road cache persists), so the mounted horse keeps
+    // commanding the last road yaw and curves back onto the path. The
+    // standalone facade loses the road more easily, so the latch survives
+    // short gaps (grace window) while the last yaw command persists -- that
+    // is the "return to path" behavior.
     const bool hit = ok && sample.m_hasHit;
     if (hit) {
+        g_missCounter = 0;
         if (g_latchPending) {
             rf->m_latched = 1;
         }
@@ -204,9 +210,13 @@ bool TickNativeRoadFollow(float dt, FootRoadProbe& out)
             hd->m_magnetHit = sample.m_hit;
             hd->m_magnetYaw = sample.m_yawFrom;
         }
-    } else {
-        rf->m_latched = 0;
-        hd->m_magnetismLive = 0;
+    } else if (rf->m_latched) {
+        hd->m_magnetismLive = 0; // command persists; live flag clears
+        ++g_missCounter;
+        if (g_missCounter >= kMissGraceFrames) {
+            rf->m_latched = 0;
+            g_missCounter = 0;
+        }
     }
     return ok;
 }

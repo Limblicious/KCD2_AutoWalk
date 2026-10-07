@@ -415,8 +415,10 @@ void Tick()
         return;
     }
 
-    // Following: the native state owns the decision; this side mirrors it.
-    const bool following = onRoad && FootRoad::NativeMagnetismLive();
+    // Following: the native latch owns the decision. During a brief sample
+    // miss the latch survives (grace window) and the last yaw command
+    // persists -- Henry keeps curving back onto the road.
+    const bool following = latched;
     UpdatePromptFlags(onRoad, latched, manualHeld);
 
     // Steering: the vanilla mounted seam (HorseFlatYaw_To_RiderLookAccum,
