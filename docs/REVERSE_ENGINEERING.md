@@ -356,6 +356,33 @@ Allocates 0x30 and calls S_OnPressController_Ctor(obj, S_HorseData*, moveAdapter
 ### Steering command chain (established)
 `S_HorseRoadFollow::Tick` -> sample.m_yawFrom -> HorseRoadFollow_PublishMagnetism writes `S_HorseData.m_magnetYaw (+0x130)`. m_magnetYaw is a **yaw command, not world heading**; m_yawSmoothed (+0x128) is a SmoothCD state chasing it via HorseYaw_SmoothCD (0x18059B800, REL 31821); the sign-flip/pseudo-speed reset lives at 0x180A4FDF1. The mounted view consumes the smoothed yaw through the rider view-state glue (REL 37998) and camera centering (REL 56442) — still to be decompiled (Phase E/F continuation).
 
+### Function: HorseYaw_SmoothCD (0x18059B800, REL 31821)
+- Recovered signature: `void HorseYaw_SmoothCD(S_HorseData* data, void* out, float dt)`.
+- Full vanilla yaw pipeline:
+  1. target = m_magnetYaw (+0x130); if bridle-state check (FUN_18059BAD8(C_Horse)) fails -> target = 0.
+  2. dt clamped to frame+0x16C (ClampDelta).
+  3. **Manual blend**: if m_pMove (+0x100) present, `target = m_pMove->vf[1](target, data)` — rider input modifies the commanded yaw (Phase D entry point).
+  4. Sign flip of target vs m_yawSmoothed -> reset m_yawSmoothed = 0.
+  5. If |wrap(target-current)| > epsilon (0x18409A4A8): SmoothCD step with
+     omega = dt * frame+0xE8 (RotationMax); critically-damped coefficients
+     (0x18409A2D8 / 0x184099F44 / 0x18409EE60 / 0x18409EE64); in/out speeds
+     frame+0xEC (RotationSmoothOutSpeed, when m_magnetYaw==0) vs frame+0xF0
+     (RotationSmoothInSpeed); step clamped to +/-omega; writes m_yawSmoothed
+     (+0x128) and m_yawVel (+0x12C).
+  6. Output: FUN_18059BBF8(out, {0, m_yawSmoothed}); then via
+     [C_Horse+0x9E8]->vf[8]() rider-sync object -> vf[0x40](&{0, m_yawSmoothed},
+     m_magnetismLive) — the exact downstream application boundary (horse yaw
+     into the rider view/sync, gated by magnetism-live).
+- Foot adapter: reproduce this exact smoothing (same cvars) and apply the
+  output to Henry's view instead of the rider-sync object.
+
+### Function: HorseSM_ApplyLookSteer (0x1829F2324)
+- The smOut 0x2C branch: anim-state triggers ("HRAC_KUN_POBIDKY"/"HRAC_SPURRING"),
+  horseData+0x10A (m_scared) on spurring, anim-bind tokens on +0x448
+  (FUN_180CFA924 9/2), rider-input flags (FUN_1829F22E8 / FUN_1829F2420).
+- Horse animation/bridle path; the steering yaw itself flows through
+  HorseYaw_SmoothCD, not here.
+
 ## Evidence standard
 
 For each native function/hook record game build, module, REL ID/signature, prototype, fields read/written, validation, failure behavior, and local runtime evidence.
