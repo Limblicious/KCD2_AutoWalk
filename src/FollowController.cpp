@@ -12,6 +12,7 @@
 #include "Offsets/vtables/IInputEventListener.h"
 #include "crysystem/CCryAction.h"
 #include "crysystem/SSystemGlobalEnvironment.h"
+#include "entitymodule/C_ActorPhysicsState.h"
 #include "entitymodule/C_Player.h"
 #include "entitymodule/C_RiderPlayerControl.h"
 #include "entitymodule/C_RiderPlayerInput.h"
@@ -36,7 +37,6 @@ std::chrono::steady_clock::time_point g_lastTick{};
 NativeMagnetism::OnPressState g_state{};
 NativeMagnetism::YawSmoother g_smoother{};
 float g_prevSmoothedYaw = 0.0f;
-float g_accumBaseline = 0.0f;
 
 FootRoad::FootRoadProbe g_cachedSample{};
 bool g_cachedSampleValid = false;
@@ -51,43 +51,18 @@ constexpr float kManualHoldDeactivateSeconds = 3.0f;
 // True while the current PostInputEvent call is our own synthetic W press.
 std::atomic<bool> g_syntheticPressInFlight{false};
 
-struct QuatBuf {
-    float x, y, z, w;
-};
-
-using GetWorldQuatFn = QuatBuf* (*)(void* entity, QuatBuf* out);
-
-bool TryGetPlayerYaw(float& yawOut)
+float WrapPi(float a)
 {
-    auto* framework = CCryAction::GetInstance();
-    auto* entity = framework ? framework->GetClientEntity() : nullptr;
-    if (!entity) {
-        return false;
-    }
-
-    const auto vtable = *reinterpret_cast<std::uintptr_t*>(entity);
-    const auto fn = *reinterpret_cast<GetWorldQuatFn*>(vtable + 0x180);
-    if (!fn) {
-        return false;
-    }
-    QuatBuf q{};
-    const auto* result = fn(entity, &q);
-    if (!result) {
-        return false;
-    }
-
-    const float fx = 2.0f * (result->x * result->y + result->w * result->z);
-    const float fy = 1.0f - 2.0f * (result->x * result->x + result->z * result->z);
-    yawOut = std::atan2(fy, fx);
-    return true;
+    while (a > 3.14159265f) a -= 6.28318531f;
+    while (a < -3.14159265f) a += 6.28318531f;
+    return a;
 }
 
-// Henry's C_ActorPhysicsState (C_Actor+0x238). The on-foot first-person
-// camera compose builds the view from the physics-state look angles; the
-// entity world TM (entity+0x58) is the BODY the movement consumes. Steering
-// rotates the body only, leaving the camera on the look state (mounted-style
-// decoupling).
-float* GetLookAngles()
+// Henry's C_ActorPhysicsState (C_Actor+0x238): the vanilla look-state machine
+// behind the view. The mounted seam (HorseFlatYaw_To_RiderLookAccum,
+// REL 37998) pumps the horse yaw delta into its +0x88 m_lookAngleAccum; the
+// foot port pumps the smoothed road-yaw delta into the same channel.
+wh::entitymodule::C_ActorPhysicsState* GetPhysicsState()
 {
     auto* framework = CCryAction::GetInstance();
     auto* player = framework
@@ -96,43 +71,8 @@ float* GetLookAngles()
     if (!player) {
         return nullptr;
     }
-    const auto state = *reinterpret_cast<void**>(
+    return *reinterpret_cast<wh::entitymodule::C_ActorPhysicsState**>(
         reinterpret_cast<std::uintptr_t>(player) + 0x238);
-    if (!state) {
-        return nullptr;
-    }
-    return reinterpret_cast<float*>(reinterpret_cast<std::uintptr_t>(state) + 0x08);
-}
-
-// Entity world TM (Matrix34: right@0..2, tx@3, forward@4..6, ty@7, up@8..10, tz@11).
-float* GetEntityWorldTM()
-{
-    auto* framework = CCryAction::GetInstance();
-    auto* entity = framework ? framework->GetClientEntity() : nullptr;
-    if (!entity) {
-        return nullptr;
-    }
-    return reinterpret_cast<float*>(reinterpret_cast<std::uintptr_t>(entity) + 0x58);
-}
-
-// Rotates the entity world TM around world Z (yaw) by 'theta' radians.
-void RotateEntityYaw(float theta)
-{
-    float* tm = GetEntityWorldTM();
-    if (!tm) {
-        return;
-    }
-    const float c = std::cos(theta);
-    const float s = std::sin(theta);
-    const auto rot = [&](float x, float y) {
-        return std::pair<float, float>(x * c - y * s, x * s + y * c);
-    };
-    auto r = rot(tm[0], tm[1]);
-    tm[0] = r.first;
-    tm[1] = r.second;
-    auto f = rot(tm[4], tm[5]);
-    tm[4] = f.first;
-    tm[5] = f.second;
 }
 
 // User-held W tracking: the listener sees fresh (untagged) W presses and
@@ -497,22 +437,30 @@ void Tick()
     const bool following = onRoad;
     UpdatePromptFlags(following, true, manualHeld);
 
-    // Steering: SmoothCD toward the native road yaw command; rotate the BODY
-    // (entity world TM) so the camera stays decoupled like on horseback.
+    // Steering: the vanilla mounted seam (HorseFlatYaw_To_RiderLookAccum,
+    // 0x1806CCAF8 / REL 37998). SmoothCD chases the native road yaw command;
+    // the per-frame delta of the smoothed yaw is pumped into Henry's
+    // m_lookAngleAccum (C_ActorPhysicsState+0x88). The physics-state tick
+    // folds it into m_lookAngles, the first-person compose reads
+    // m_viewRotation, and the on-foot body follows the view -- exactly the
+    // mounted pipeline, with the mouse untouched on the request channel.
     if (following && !manualHeld) {
         NativeMagnetism::SmoothCD(g_smoother, sample.yawFrom, dt, *cvars);
 
-        float playerYaw = 0.0f;
-        if (TryGetPlayerYaw(playerYaw)) {
-            if (!g_smoother.initialized) {
-                g_smoother.initialized = true;
-                g_smoother.smoothed = playerYaw; // start aligned to the player
-                g_prevSmoothedYaw = g_smoother.smoothed;
+        if (!g_smoother.initialized) {
+            g_smoother.initialized = true;
+            if (auto* state = GetPhysicsState()) {
+                g_smoother.smoothed = state->m_lookAngles.z; // seed at current view yaw
             }
-            const float delta = g_smoother.smoothed - g_prevSmoothedYaw;
             g_prevSmoothedYaw = g_smoother.smoothed;
-            const float sign = g_steerInvert ? -1.0f : 1.0f;
-            RotateEntityYaw(delta * sign);
+        }
+
+        const float sign = g_steerInvert ? -1.0f : 1.0f;
+        const float delta = WrapPi(g_smoother.smoothed - g_prevSmoothedYaw) * sign;
+        g_prevSmoothedYaw = g_smoother.smoothed;
+
+        if (auto* state = GetPhysicsState()) {
+            state->m_lookAngleAccum.z += delta;
         }
 
         HoldForward();
@@ -530,6 +478,7 @@ void Tick()
                    " hasHit=" + std::to_string(haveSample && sample.hasHit) +
                    " yawFrom=" + std::to_string(sample.yawFrom) +
                    " smoothed=" + std::to_string(g_smoother.smoothed) +
+                   " accum=" + std::to_string(GetPhysicsState() ? GetPhysicsState()->m_lookAngleAccum.z : 0.0f) +
                    " deact=" + std::to_string(g_state.deactivateTime) +
                    " react=" + std::to_string(g_state.reactivateTime));
     }
