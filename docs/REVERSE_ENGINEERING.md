@@ -317,6 +317,31 @@ vector region initialized with the same reserve helper.
 ### Function: RoadPath_AppendPointId (0x180A0B38C)
 - Appends road point ids (S_HorseRoadPoint.m_id, +0x28) into an int32 vector (m_pathB) with dedup: skips when last == from-id; pushes to-id after from-id; avoids consecutive duplicates.
 
+## Phase C — S_OnPressController (hold-E mode)
+
+### Layout
+0x30: magnetism vptr @0, rider-SM-modifier vptr @8, m_pPlayer @0x10,
+m_pHorseData @0x18, m_deactivateTime @0x20, m_reactivateTime @0x24,
+m_hintTime @0x28, m_flags @0x2C (bit0 active, bit1 latched, bit3 flick,
+bit4 interrupted/armed).
+
+### Function: S_OnPressController_SetHoldLatched (0x180A4E98C)
+`m_flags = (m_flags & ~2) | (latched << 1)` — trivial bit update.
+
+### Function: S_OnPressController_Tick (0x180A4E768)
+- Phase 0: if armed (bit4): rider input via `m_pMove(+0x100)->vf[0x18]()`; yaw below const OR move below 0.2 -> clear bit4 (interruption clears the armed state). Chat-follow active -> clear active/latch bits + zero timers (deactivate).
+- Phase 1: countdown m_deactivateTime and m_hintTime; every 10th frame sets C_Player+0xB08+0x110 (hint visibility) = 1; if horseData+0x10C (jump request) -> clear active/latch bits.
+- Phase 2: reset m_deactivateTime; if `|riderYaw|*deg < frame+0x88` (RemainAngle) OR move <= 0.2 -> stay; else set bit4 (armed) and copy frame+0x204/0x208 (DeactivateTime/ReactivateTime) into m_deactivateTime/m_reactivateTime.
+- Phase 3: countdown m_deactivateTime; when exhausted count down m_reactivateTime; at 0 -> clear active/latch bits and timers (deactivate after the reactivate grace window).
+- Phase 5: if sample.m_failed == 0 return; else clear bit0, set bit3 (flick), zero timers.
+- Semantics: rider input beyond RemainAngle arms deactivation timers; the follow survives a grace period (ReactivateTime) before deactivating — exactly the "manual input interruption/falloff" behavior. Jump request and chat-follow deactivate immediately.
+
+### Function: S_OnPressController_HintsActive (0x180A4E99C)
+`(m_flags & 1) && m_deactivateTime <= 0 && !(m_flags & 0x10)` — the hold-E hint visibility predicate.
+
+### Function: S_OnPressController_Factory (0x181932168)
+Allocates 0x30 and calls S_OnPressController_Ctor(obj, S_HorseData*, moveAdapter) (ctor 0x1819321F8).
+
 ## Evidence standard
 
 For each native function/hook record game build, module, REL ID/signature, prototype, fields read/written, validation, failure behavior, and local runtime evidence.
