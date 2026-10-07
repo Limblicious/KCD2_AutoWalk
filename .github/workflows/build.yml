@@ -15,7 +15,9 @@ jobs:
       - name: Install vcpkg
         shell: pwsh
         run: |
-          git clone --depth 1 https://github.com/microsoft/vcpkg.git "$env:RUNNER_TEMP\vcpkg"
+          git clone --filter=blob:none --no-checkout https://github.com/microsoft/vcpkg.git "$env:RUNNER_TEMP\vcpkg"
+          git -C "$env:RUNNER_TEMP\vcpkg" fetch --depth 1 origin 2e776305f2542cc626716435b0c1baf67bb5ab45
+          git -C "$env:RUNNER_TEMP\vcpkg" checkout --detach 2e776305f2542cc626716435b0c1baf67bb5ab45
           & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat"
           "VCPKG_ROOT=$env:RUNNER_TEMP\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
 
