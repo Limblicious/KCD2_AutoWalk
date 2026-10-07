@@ -1,102 +1,109 @@
-# Reverse-Engineering Workstation Handoff
+# Reverse-Engineering Workstation Handoff — Ghidra
 
-This is the **first task** for the game-PC/OpenCode session after pulling `main`.
+This is the first task for the game-PC/OpenCode session after pulling `main`.
 
-## 1. Pull and prepare a non-destructive target copy
+## Toolchain
+
+Use the exact stack documented in `docs/GHIDRA_SETUP.md`:
+
+- Ghidra 12.1.4
+- JDK 21
+- GhidraMCP v0.9.0 from `themixednuts/GhidraMCP`
+- OpenCode connected to the local MCP endpoint
+
+## 1. Pull and stage a non-destructive copy
 
 ```powershell
 git pull --ff-only
 .\scripts\prepare-re.ps1
 ```
 
-This copies the installed `WHGame.dll` into:
+This copies the installed `WHGame.dll` to `.re/input/WHGame.dll` and writes `.re/target.json` with SHA-256, version, size, and Address Library filenames.
 
-```text
-.re/input/WHGame.dll
+The installed DLL is read/copied only.
+
+If the game no longer matches KCD2 1.5.6 / release_1_5-15693, stop before applying absolute address seeds.
+
+## 2. Verify tools
+
+Set `GHIDRA_HOME` to the extracted Ghidra 12.1.4 directory, then run:
+
+```powershell
+.\scripts\check-re-tools.ps1
 ```
 
-and writes:
+## 3. Create/analyze the Ghidra project
 
-```text
-.re/target.json
+```powershell
+.\scripts\ghidra-import.ps1
 ```
 
-with SHA-256, file version, size, and detected Address Library filenames.
+This analyzes the copied binary and stores the project under:
 
-The installed game binary is never modified.
+```text
+.re/ghidra/KCD2_AutoWalk_RE.gpr
+.re/ghidra/KCD2_AutoWalk_RE.rep/
+```
 
-If the local game was updated since the expected 1.5.6 / 15693 target, stop and reconcile compatibility before applying absolute VAs from `re/seed_manifest.json`.
+It runs `re/ghidra_scripts/ApplyAutoWalkSeeds.java` after auto-analysis so known functions/vtables/RTTI and controller vtable targets are named before agent work begins.
 
-## 2. Open the copy in IDA/Hex-Rays
+Use `-Rebuild` only when intentionally rebuilding this ignored local project.
 
-Open only:
+## 4. Open Ghidra
 
-`.re/input/WHGame.dll`
+Open `.re/ghidra/KCD2_AutoWalk_RE.gpr` and then `WHGame.dll` in CodeBrowser.
 
-Create the IDB inside `.re/`.
+Never patch the installed game's DLL.
 
-Do not commit the IDB.
+## 5. Start GhidraMCP
 
-## 3. Connect IDA MCP to OpenCode
+Inside CodeBrowser:
 
-The workstation agent should have direct decompiler/xref/type/rename access.
+1. `File > Configure > Configure All Plugins`
+2. enable **GhidraMCP**
+3. `Tools > GhidraMCP > Start MCP Server`
+4. keep it on `127.0.0.1:8080`
 
-Before doing any native implementation work, give the agent these repo files:
+Then:
 
-- `AGENTS.md`;
-- `docs/DECOMPILATION_PLAN.md`;
-- `docs/REVERSE_ENGINEERING.md`;
-- `docs/UPSTREAM_RE_FINDINGS.md`;
-- `re/seed_manifest.json`.
+```powershell
+opencode mcp list
+```
 
-## 4. Apply seeds before exploring
+The `ghidra` server should show connected.
 
-Use `re/seed_manifest.json` to name known functions/vtables/RTTI only after validating the target build.
+## 6. Give OpenCode the prepared task
 
-First resolve the **four entries at `VTABLE_S_AutoController`** and rename the slot targets according to the known interface contract:
+Read in order:
 
-1. destructor;
-2. `SetHoldLatched`;
-3. `Tick`;
-4. `GetRoadDistance`.
+1. `AGENTS.md`
+2. `docs/OPENCODE_RE_TASK.md`
+3. `docs/DECOMPILATION_PLAN.md`
+4. `docs/REVERSE_ENGINEERING.md`
+5. `docs/UPSTREAM_RE_FINDINGS.md`
+6. `re/seed_manifest.json`
+7. `re/type_layouts.json`
+8. `re/horse_cvars.json`
+9. `re/autowalk_types.h`
 
-Then do the same for the OnPress controller.
+## 7. First milestone
 
-This immediately yields the concrete implementation functions instead of circling around dispatch wrappers.
+Do not implement Henry movement yet.
 
-## 5. First decompilation milestone
+Using GhidraMCP:
 
-Do not implement anything yet.
+- inspect `VTABLE_S_AutoController`;
+- verify its four concrete targets;
+- apply the `I_MagnetismController` slot contract;
+- create/apply known controller structures;
+- fully decompile `S_AutoController::Tick`;
+- recursively decompile every nontrivial helper;
+- then fully decompile `S_HorseRoadFollow::Tick`;
+- connect both dataflow/call graphs.
 
-Complete phases A and B of `docs/DECOMPILATION_PLAN.md`:
+Persist useful renames, types, prototypes, comments, and bookmarks in the Ghidra project.
 
-- full `S_HorseRoadFollow::Tick`;
-- full `S_AutoController`;
-- all nontrivial helpers called from those functions.
-
-Apply `S_HorseCVars` offset names as each float/int global is recognized.
-
-Commit only textual findings/type declarations/source changes—not IDA artifacts.
-
-## 6. Second milestone
-
-Then recover:
-
-- OnPress / hold-E activation;
-- rider WASD interaction;
-- desired-yaw and smoothing chain.
-
-Only after these are branch-complete should the workstation investigate the Henry adaptation seam.
-
-## 7. Camera milestone
-
-Decompile the mounted camera separately rather than mixing it into steering work:
-
-- Rider compose;
-- FirstPerson compose comparison;
-- horse-yaw view accumulator;
-- centering;
-- view-limit installation/clamp.
+Commit only textual findings/source changes, never `.re/` or the copied binary.
 
 ## 8. Reporting format
 
@@ -117,11 +124,11 @@ Output:
 Confidence/evidence:
 ```
 
-For complex functions include normalized pseudocode, not raw Hex-Rays output.
+For complex functions include normalized pseudocode, not raw decompiler output.
 
-## 9. No prototype tuning
+## 9. Prototype freeze
 
-Do not spend workstation time adjusting:
+Do not tune:
 
 - `g_steerGain`;
 - CTE constants;
@@ -129,4 +136,4 @@ Do not spend workstation time adjusting:
 - synthetic mouse turn scaling;
 - hard WASD cancellation.
 
-That prototype is frozen while native reconstruction is underway.
+The prototype remains frozen until native reconstruction is complete.
