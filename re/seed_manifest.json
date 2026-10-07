@@ -4,7 +4,7 @@
     "module": "WHGame.dll",
     "expected_image_base": "0x180000000",
     "expected_runtime": "KCD2 Steam 1.5.6 / release_1_5-15693",
-    "rule": "Verify target hash/build before applying absolute VAs. Prefer REL IDs when available."
+    "rule": "Verify target hash/build before applying absolute VAs. Prefer REL IDs when available. Addresses are Ghidra seeds for the supported image base."
   },
   "functions": [
     {
@@ -227,7 +227,7 @@
       "fork_signature": "48 8D 54 24 40 48 8D 4D 9F E8 ?? ?? ?? ?? 84 C0 74 ?? 48 8B 47 68 48 8D 55 AF 4D 8B CF 48 89 45 E7 4D 8B C6 F3 0F 11 7C 24 20",
       "snap_callsite": "0x180A09D7E",
       "snap_signature": "48 8D 54 24 38 F3 44 0F 11 5C 24 38 48 8D 4C 24 50 F3 44 0F 11 54 24 3C C7 44 24 40 00 00 00 00 E8 ?? ?? ?? ?? 84 C0 0F 84 ?? ?? ?? ?? 48 8B 44 24 50 48 8D 55 88 48 8B 4D 60 4C 8B CE 4C 8B C3 48 89 44 24 30",
-      "filter_signature_hint": "bool(float*, float*) in that mod's typedef; verify exact native meaning in IDA",
+      "filter_signature_hint": "bool(float*, float*) in that mod's typedef; verify exact native meaning in Ghidra",
       "candidate_registers": "fork stub records r14 -> r15; snap stub records rbx -> rsi"
     }
   ]
