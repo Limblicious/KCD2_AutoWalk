@@ -4,6 +4,8 @@
 #include <chrono>
 #include <cmath>
 
+#include <MinHook.h>
+
 #include "FootRoad.h"
 #include "InputSeam.h"
 #include "Log.h"
@@ -23,6 +25,73 @@
 
 namespace AutoWalk::FollowController {
 namespace {
+
+// --- Movement-controller hook (camera-decoupled body steering) -------------
+// The recovered on-foot body-turn seam: C_ActorMovementController (actor
+// +0x180) vf13 (0x1804B8E88) fills the per-frame S_MountAnimState request;
+// its m_desiredVelocity (+0x0C) is the world-rotated walk direction. The
+// hook rotates that velocity by the follow yaw delta: Henry's body turns
+// through the movement system while the look state (the camera) is never
+// touched -- the mounted decoupling.
+using MovementRequestFn = void (*)(void* self, float dt, float* out);
+
+MovementRequestFn g_originalMovementRequest = nullptr;
+bool g_movementHookInstalled = false;
+float g_pendingYawDelta = 0.0f;
+
+void MovementRequestHook(void* self, float dt, float* out)
+{
+    g_originalMovementRequest(self, dt, out);
+
+    const float d = g_pendingYawDelta;
+    g_pendingYawDelta = 0.0f;
+    if (d == 0.0f) {
+        return;
+    }
+    // m_desiredVelocity at out+0x0C (floats [3],[4],[5]); yaw-rotate in the
+    // world XY plane.
+    const float c = std::cos(d);
+    const float s = std::sin(d);
+    const float x = out[3];
+    const float y = out[4];
+    out[3] = x * c - y * s;
+    out[4] = x * s + y * c;
+}
+
+void EnsureMovementHook()
+{
+    if (g_movementHookInstalled) {
+        return;
+    }
+    auto* framework = CCryAction::GetInstance();
+    auto* player = framework
+        ? static_cast<wh::entitymodule::C_Player*>(framework->GetClientActor())
+        : nullptr;
+    if (!player) {
+        return;
+    }
+    void* controller = *reinterpret_cast<void**>(
+        reinterpret_cast<std::uintptr_t>(player) + 0x180);
+    if (!controller) {
+        return;
+    }
+    void** vtable = *reinterpret_cast<void***>(controller);
+    void* target = vtable[13];
+    if (!target) {
+        return;
+    }
+    if (MH_CreateHook(target, reinterpret_cast<void*>(&MovementRequestHook),
+                      reinterpret_cast<void**>(&g_originalMovementRequest)) != MH_OK) {
+        Log::Write("[AutoWalk] FollowController: movement hook create failed.");
+        return;
+    }
+    if (MH_EnableHook(target) != MH_OK) {
+        Log::Write("[AutoWalk] FollowController: movement hook enable failed.");
+        return;
+    }
+    g_movementHookInstalled = true;
+    Log::Write("[AutoWalk] FollowController: movement-controller hook installed.");
+}
 
 std::atomic<Phase> g_phase{Phase::Disabled};
 bool g_wHeld = false;
@@ -421,13 +490,11 @@ void Tick()
     const bool following = latched;
     UpdatePromptFlags(onRoad, latched, manualHeld);
 
-    // Steering: the vanilla mounted seam (HorseFlatYaw_To_RiderLookAccum,
-    // 0x1806CCAF8 / REL 37998). SmoothCD chases the native road yaw command
-    // (m_magnetYaw); the per-frame delta of the smoothed yaw is pumped into
-    // Henry's m_lookAngleAccum (C_ActorPhysicsState+0x88). The physics-state
-    // tick folds it into m_lookAngles, the first-person compose reads
-    // m_viewRotation, and the on-foot body follows the view -- exactly the
-    // mounted pipeline, with the mouse untouched on the request channel.
+    // Steering: SmoothCD chases the native road yaw command; the per-frame
+    // delta of the smoothed yaw rotates the movement request's desired
+    // velocity (the movement-controller hook) -- Henry's body turns through
+    // the movement system while the look state (the camera) is untouched:
+    // the mounted decoupling.
     if (following && !manualHeld) {
         // The native sample command is accepted directly while following:
         // the recovered enter-angle gate (SetHoldLatchedImpl gate 5) applies
@@ -436,6 +503,7 @@ void Tick()
         g_targetYaw = target;
         g_targetValid = true;
 
+        EnsureMovementHook();
         NativeMagnetism::SmoothCD(g_smoother, g_targetYaw, dt, *cvars);
 
         if (!g_smoother.initialized) {
@@ -450,9 +518,7 @@ void Tick()
         const float delta = WrapPi(g_smoother.smoothed - g_prevSmoothedYaw) * sign;
         g_prevSmoothedYaw = g_smoother.smoothed;
 
-        if (auto* state = GetPhysicsState()) {
-            state->m_lookAngleAccum.z += delta;
-        }
+        g_pendingYawDelta = delta;
 
         HoldForward();
         g_phase.store(Phase::Following);
@@ -476,7 +542,7 @@ void Tick()
                    std::to_string(sample.playerY) + ")" +
                    " smoothed=" + std::to_string(g_smoother.smoothed) +
                    " rotMax=" + std::to_string(cvars->rotationMax) +
-                   " accum=" + std::to_string(GetPhysicsState() ? GetPhysicsState()->m_lookAngleAccum.z : 0.0f));
+                   " velDelta=" + std::to_string(g_pendingYawDelta));
     }
 }
 
