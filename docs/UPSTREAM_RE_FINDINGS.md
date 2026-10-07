@@ -83,7 +83,7 @@ Current upstream preserves:
 - primary vtable `0x183C34910`, REL 495794;
 - secondary rider-state-machine-modifier vtable `0x183C348D0`, REL 495790.
 
-Resolve the actual slot targets in IDA immediately; they are the shortest path to the exact controller algorithms.
+Resolve the actual slot targets in Ghidra immediately; they are the shortest path to the exact controller algorithms.
 
 
 ## Horse Route Follow candidate-filter anchors
@@ -100,7 +100,7 @@ Its hook captures the candidate road endpoints from:
 
 and then calls the original filter. The mod explicitly leaves steering to vanilla.
 
-These addresses are valuable decompiler anchors because they sit **inside the vanilla candidate-selection flow**. In IDA:
+These addresses are valuable decompiler anchors because they sit **inside the vanilla candidate-selection flow**. In Ghidra:
 
 1. inspect the containing function at each call site;
 2. resolve the original call target;
