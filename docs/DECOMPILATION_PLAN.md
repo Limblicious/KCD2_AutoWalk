@@ -13,10 +13,13 @@ The purpose is to read the algorithm.
 Preferred workstation setup:
 
 - exact supported KCD2 `WHGame.dll` copied to a dedicated RE working directory;
-- IDA + Hex-Rays decompiler;
-- IDA MCP server connected to OpenCode or another local agent;
-- libKCD2 source open alongside IDA for existing types/REL IDs/RTTI;
-- IDB and binary working copies gitignored and never committed.
+- **Ghidra 12.1.4** with its local x86-64 decompiler;
+- **GhidraMCP v0.9.0** (`themixednuts/GhidraMCP`) enabled in CodeBrowser;
+- OpenCode connected to `http://127.0.0.1:8080/mcp`;
+- libKCD2 source and this repo's seed/type/CVar manifests available alongside Ghidra;
+- Ghidra project and binary copies stored under ignored `.re/` and never committed.
+
+Use GhidraMCP decompilation, references, functions, symbols, data-types, RTTI/analysis, memory, comments/bookmarks, and project tools to persist recovered understanding in the Ghidra project while recording normalized findings in `docs/REVERSE_ENGINEERING.md`.
 
 ## Seed information already known
 
