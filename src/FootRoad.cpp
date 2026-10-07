@@ -49,6 +49,7 @@ void CopySampleIntoProbe(const wh::entitymodule::S_HorseMagnetismSample& sample,
     out.yawTo = sample.m_yawTo;
     out.pFromValid = sample.m_pFrom != nullptr;
     out.pToValid = sample.m_pTo != nullptr;
+    out.failed = sample.m_failed != 0;
     if (sample.m_pFrom) {
         out.fromX = sample.m_pFrom->m_pos.x;
         out.fromY = sample.m_pFrom->m_pos.y;

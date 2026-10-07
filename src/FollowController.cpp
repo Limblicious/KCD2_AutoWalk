@@ -7,6 +7,7 @@
 #include "FootRoad.h"
 #include "InputSeam.h"
 #include "Log.h"
+#include "NativeMagnetism.h"
 #include "Offsets/vtables/IInput.h"
 #include "Offsets/vtables/IInputEventListener.h"
 #include "crysystem/CCryAction.h"
@@ -23,51 +24,39 @@ bool g_wHeld = false;
 
 constexpr float kSampleDistance = 40.0f;
 constexpr float kSampleIntervalSeconds = 1.0f / 15.0f; // 15 Hz road sampling
-constexpr float kSmoothRate = 10.0f;  // exponential smoothing of the error
-constexpr float kDeadzone = 0.004f;   // rad
 
 std::chrono::steady_clock::time_point g_lastSample{};
 std::chrono::steady_clock::time_point g_lastLog{};
+std::chrono::steady_clock::time_point g_lastTick{};
 
-// Latest road aim point + travel direction, with continuity filtering.
-// The standalone sampler has no persistent road cache, so its from/to
-// segment orientation can flip between queries; the direction continuity
-// guard keeps the target stable.
-struct RoadState {
-    bool valid = false;
-    float alongX = 0.0f, alongY = 0.0f;
-    float hitX = 0.0f, hitY = 0.0f;
-    float dirX = 0.0f, dirY = 0.0f;
-};
+NativeMagnetism::OnPressState g_state{};
+NativeMagnetism::YawSmoother g_smoother{};
+float g_prevSmoothedYaw = 0.0f;
+float g_accumBaseline = 0.0f;
 
-RoadState g_road{};
-float g_smoothedError = 0.0f;
+FootRoad::FootRoadProbe g_cachedSample{};
+bool g_cachedSampleValid = false;
 
-// True while the current PostInputEvent call is our own synthetic W press;
-// the input listener ignores those (they must not cancel the follow).
+// User-input signals gathered by the input listener each frame.
+std::atomic<bool> g_engageRequested{false};
+std::atomic<bool> g_manualInput{false};
+
+// True while the current PostInputEvent call is our own synthetic W press.
 std::atomic<bool> g_syntheticPressInFlight{false};
 
 struct QuatBuf {
     float x, y, z, w;
 };
 
-// IEntity slot [48] (vf+0x180): world rotation getter used by the native
-// road state builder (verified via Offsets/vtables/IEntity.h + disassembly).
 using GetWorldQuatFn = QuatBuf* (*)(void* entity, QuatBuf* out);
 
-bool TryGetPlayerPose(float& posX, float& posY, float& fwdX, float& fwdY)
+bool TryGetPlayerYaw(float& yawOut)
 {
     auto* framework = CCryAction::GetInstance();
     auto* entity = framework ? framework->GetClientEntity() : nullptr;
     if (!entity) {
         return false;
     }
-
-    Vec3 pos{};
-    auto* iface = static_cast<Offsets::IEntity*>(entity);
-    iface->GetWorldPos(pos);
-    posX = pos.x;
-    posY = pos.y;
 
     const auto vtable = *reinterpret_cast<std::uintptr_t*>(entity);
     const auto fn = *reinterpret_cast<GetWorldQuatFn*>(vtable + 0x180);
@@ -82,13 +71,47 @@ bool TryGetPlayerPose(float& posX, float& posY, float& fwdX, float& fwdY)
 
     const float fx = 2.0f * (result->x * result->y + result->w * result->z);
     const float fy = 1.0f - 2.0f * (result->x * result->x + result->z * result->z);
-    const float len = std::sqrt(fx * fx + fy * fy);
-    if (len < 1e-6f) {
+    yawOut = std::atan2(fy, fx);
+    return true;
+}
+
+// Henry's C_ActorPhysicsState look accumulator (+0x238 -> +0x88), the same
+// seam the mounted horse glue (REL 37998) writes to.
+float* GetLookAccumulator()
+{
+    auto* framework = CCryAction::GetInstance();
+    auto* player = framework
+        ? static_cast<wh::entitymodule::C_Player*>(framework->GetClientActor())
+        : nullptr;
+    if (!player) {
+        return nullptr;
+    }
+    const auto state = *reinterpret_cast<void**>(
+        reinterpret_cast<std::uintptr_t>(player) + 0x238);
+    if (!state) {
+        return nullptr;
+    }
+    return reinterpret_cast<float*>(reinterpret_cast<std::uintptr_t>(state) + 0x88);
+}
+
+bool IsChatFollowActive()
+{
+    auto* framework = CCryAction::GetInstance();
+    auto* player = framework
+        ? static_cast<wh::entitymodule::C_Player*>(framework->GetClientActor())
+        : nullptr;
+    if (!player) {
         return false;
     }
-    fwdX = fx / len;
-    fwdY = fy / len;
-    return true;
+    const auto chat = *reinterpret_cast<void**>(
+        reinterpret_cast<std::uintptr_t>(player) + 0xCE8);
+    if (!chat) {
+        return false;
+    }
+    using ChatFollowFn = bool (*)(void*);
+    const auto fn = *reinterpret_cast<ChatFollowFn*>(
+        *reinterpret_cast<std::uintptr_t*>(chat) + 0x08);
+    return fn ? fn(chat) : false;
 }
 
 bool IsMounted()
@@ -122,75 +145,31 @@ void HoldForward()
     g_wHeld = true;
 }
 
-void SampleRoad()
-{
-    FootRoad::FootRoadProbe sample{};
-    if (!FootRoad::SampleRoadStandalone(kSampleDistance, sample) ||
-        !sample.hasHit) {
-        g_road.valid = false;
-        return;
-    }
-
-    float dirX = sample.alongX - sample.hitX;
-    float dirY = sample.alongY - sample.hitY;
-    const float len = std::sqrt(dirX * dirX + dirY * dirY);
-    if (len < 1e-6f) {
-        return;
-    }
-    dirX /= len;
-    dirY /= len;
-
-    float alongX = sample.alongX;
-    float alongY = sample.alongY;
-
-    // Continuity: a flip means the query reversed its segment orientation.
-    // Reflect the aim point across the hit point so the target stays on the
-    // same side of the player.
-    if (g_road.valid) {
-        const float dot = dirX * g_road.dirX + dirY * g_road.dirY;
-        if (dot < -0.5f) {
-            dirX = -dirX;
-            dirY = -dirY;
-            alongX = 2.0f * sample.hitX - alongX;
-            alongY = 2.0f * sample.hitY - alongY;
-        }
-    }
-
-    g_road.alongX = alongX;
-    g_road.alongY = alongY;
-    g_road.hitX = sample.hitX;
-    g_road.hitY = sample.hitY;
-    g_road.dirX = dirX;
-    g_road.dirY = dirY;
-    g_road.valid = true;
-}
-
-// Registered once with pInput->AddEventListener: cancels the follow when the
-// player presses any movement key (W/A/S/D) that we did not synthesize.
-class MovementCancelListener final : public Offsets::IInputEventListener {
+class InputListener final : public Offsets::IInputEventListener {
 public:
     bool OnInputEvent(const Offsets::SInputEvent& event) override
     {
-        if (event.deviceId != Offsets::eDI_Keyboard ||
-            g_phase.load() == Phase::Disabled) {
+        if (event.deviceId != Offsets::eDI_Keyboard) {
             return false;
         }
 
         const auto key = event.keyId;
+        if (key == Offsets::eKI_E && event.state == Offsets::eIS_Pressed) {
+            g_engageRequested.store(true);
+            return false;
+        }
+
         const bool isMoveKey = key == Offsets::eKI_W || key == Offsets::eKI_A ||
                                key == Offsets::eKI_S || key == Offsets::eKI_D;
         if (!isMoveKey) {
             return false;
         }
-
         if (key == Offsets::eKI_W && g_syntheticPressInFlight.load()) {
             return false; // our own press
         }
-
-        if (event.state == Offsets::eIS_Pressed) {
-            ReleaseForward();
-            g_phase.store(Phase::Disabled);
-            Log::Write("[AutoWalk] FollowController: cancelled by player input.");
+        if (event.state == Offsets::eIS_Pressed ||
+            event.state == Offsets::eIS_Down) {
+            g_manualInput.store(true);
         }
         return false; // never consume
     }
@@ -200,27 +179,24 @@ public:
     bool _vf3(const void*) override { return false; }
 };
 
-MovementCancelListener s_cancelListener;
+InputListener s_inputListener;
 bool s_listenerRegistered = false;
 
-void EnsureCancelListener()
+void EnsureInputListener()
 {
     if (s_listenerRegistered) {
         return;
     }
     auto* env = SSystemGlobalEnvironment::GetInstance();
-    if (env && env->pInput && env->pInput->AddEventListener(&s_cancelListener)) {
+    if (env && env->pInput && env->pInput->AddEventListener(&s_inputListener)) {
         s_listenerRegistered = true;
-        Log::Write("[AutoWalk] FollowController: input cancel listener registered.");
+        Log::Write("[AutoWalk] FollowController: input listener registered.");
     }
 }
 
 } // namespace
 
-float g_steerGain = 12.0f;
-float g_steerMax = 5.0f;
-float g_steerLookahead = 0.35f;
-int g_steerInvert = 0;
+int g_steerInvert = 1;
 
 Phase GetPhase()
 {
@@ -229,16 +205,20 @@ Phase GetPhase()
 
 void Enable()
 {
-    EnsureCancelListener();
+    EnsureInputListener();
     g_phase.store(Phase::AwaitingRoad);
-    g_smoothedError = 0.0f;
-    g_road.valid = false;
-    Log::Write("[AutoWalk] FollowController: enabled.");
+    g_state.flags |= 0x01; // console override engages directly
+    g_state.flags |= 0x02;
+    g_state.flags &= ~0x10;
+    g_smoother = {};
+    g_prevSmoothedYaw = 0.0f;
+    Log::Write("[AutoWalk] FollowController: enabled (native-faithful).");
 }
 
 void Disable()
 {
     ReleaseForward();
+    g_state.flags = 0;
     g_phase.store(Phase::Disabled);
     Log::Write("[AutoWalk] FollowController: disabled.");
 }
@@ -246,6 +226,7 @@ void Disable()
 void Reset()
 {
     ReleaseForward();
+    g_state.flags = 0;
     g_phase.store(Phase::Disabled);
 }
 
@@ -262,6 +243,7 @@ void Tick()
 
     if (!player || IsMounted()) {
         ReleaseForward();
+        g_state.flags = 0;
         g_phase.store(Phase::Disabled);
         Log::Write("[AutoWalk] FollowController: stopped (player unavailable or mounted).");
         return;
@@ -269,80 +251,91 @@ void Tick()
 
     using namespace std::chrono;
     const auto now = steady_clock::now();
+    float dt = 1.0f / 60.0f;
+    if (g_lastTick != steady_clock::time_point{}) {
+        dt = duration_cast<duration<float>>(now - g_lastTick).count();
+        if (dt <= 0.0f) dt = 1.0f / 60.0f;
+        if (dt > 0.25f) dt = 0.25f;
+    }
+    g_lastTick = now;
 
+    // Native tuning values.
+    const NativeMagnetism::FrameCVars* cvars = nullptr;
+    if (!NativeMagnetism::RefreshFrameCVars(cvars) || !cvars) {
+        Log::Write("[AutoWalk] FollowController: frame cvars unavailable.");
+        Disable();
+        return;
+    }
+
+    // Road acquisition through the native sampler (cached between samples).
+    FootRoad::FootRoadProbe sample{};
+    bool haveSample = false;
     if (g_lastSample == steady_clock::time_point{} ||
         now - g_lastSample >= milliseconds(static_cast<long long>(kSampleIntervalSeconds * 1000.0f))) {
         g_lastSample = now;
-        SampleRoad();
+        haveSample = FootRoad::SampleRoadStandalone(kSampleDistance, sample);
+        g_cachedSample = sample;
+        g_cachedSampleValid = haveSample;
+    } else if (g_cachedSampleValid) {
+        haveSample = true;
+        sample = g_cachedSample;
     }
 
-    if (!g_road.valid) {
-        g_phase.store(Phase::AwaitingRoad);
-        ReleaseForward();
-        return;
-    }
+    // State machine with the recovered semantics.
+    const bool manual = g_manualInput.exchange(false);
+    const bool engage = g_engageRequested.exchange(false);
+    const bool failed = haveSample && sample.failed;
+    const bool chat = IsChatFollowActive();
 
-    // User-input cancel (belt and braces): the listener may be skipped when
-    // an earlier listener consumes events, so also poll the real-device key
-    // state directly. We never synthesize A/S/D, so any down state is the
-    // player steering manually.
-    auto* env = SSystemGlobalEnvironment::GetInstance();
-    if (env && env->pInput) {
-        const bool userSteer =
-            env->pInput->InputState("a", Offsets::eIS_Down) ||
-            env->pInput->InputState("s", Offsets::eIS_Down) ||
-            env->pInput->InputState("d", Offsets::eIS_Down);
-        if (userSteer) {
+    const bool followActive = NativeMagnetism::TickStateMachine(
+        g_state, dt, *cvars, manual, chat, failed, engage);
+
+    if (!followActive || g_phase.load() == Phase::AwaitingRoad) {
+        if (!followActive) {
             ReleaseForward();
             g_phase.store(Phase::Disabled);
-            Log::Write("[AutoWalk] FollowController: cancelled by player steering (A/S/D).");
-            return;
+            Log::Write("[AutoWalk] FollowController: deactivated (state machine).");
         }
-    }
-
-    float posX = 0.0f, posY = 0.0f, fwdX = 0.0f, fwdY = 0.0f;
-    if (!TryGetPlayerPose(posX, posY, fwdX, fwdY)) {
-        ReleaseForward();
         return;
     }
 
-    // Steering: align the heading with the road tangent plus a small
-    // cross-track correction pulling back toward the road line.
-    const float headingErr = std::atan2(
-        fwdX * g_road.dirY - fwdY * g_road.dirX,
-        fwdX * g_road.dirX + fwdY * g_road.dirY);
-    const float rx = posX - g_road.hitX;
-    const float ry = posY - g_road.hitY;
-    const float cte = rx * g_road.dirY - ry * g_road.dirX; // >0 = left of line
-    float cteCorr = cte * 0.05f;
-    if (cteCorr > 0.3f) cteCorr = 0.3f;
-    if (cteCorr < -0.3f) cteCorr = -0.3f;
-    const float error = headingErr + cteCorr;
+    // Steering: SmoothCD toward the native road yaw command.
+    if (haveSample && sample.hasHit) {
+        NativeMagnetism::SmoothCD(g_smoother, sample.yawFrom, dt, *cvars);
 
-    const float alpha = kSmoothRate * (1.0f / 60.0f);
-    g_smoothedError += (error - g_smoothedError) * alpha;
+        // Apply the smoothed yaw delta through Henry's look accumulator —
+        // the recovered mounted-camera seam (REL 37998 equivalent).
+        float* accum = GetLookAccumulator();
+        float playerYaw = 0.0f;
+        if (accum && TryGetPlayerYaw(playerYaw)) {
+            if (!g_smoother.initialized) {
+                g_smoother.initialized = true;
+                g_smoother.smoothed = playerYaw; // start aligned to the player
+                g_prevSmoothedYaw = g_smoother.smoothed;
+            }
+            const float delta = g_smoother.smoothed - g_prevSmoothedYaw;
+            g_prevSmoothedYaw = g_smoother.smoothed;
+            const float sign = g_steerInvert ? -1.0f : 1.0f;
+            accum[2] += delta * sign; // Ang3 z = yaw
+        }
 
-    const float sign = g_steerInvert ? -1.0f : 1.0f;
-    if (std::abs(g_smoothedError) > kDeadzone) {
-        float dx = g_smoothedError * g_steerGain * sign;
-        if (dx > g_steerMax) dx = g_steerMax;
-        if (dx < -g_steerMax) dx = -g_steerMax;
-        InputSeam::PostMouseDelta(dx);
+        HoldForward();
+        g_phase.store(Phase::Following);
+    } else {
+        ReleaseForward();
+        g_phase.store(Phase::AwaitingRoad);
     }
 
-    HoldForward();
-    g_phase.store(Phase::Following);
-
     if (g_lastLog == steady_clock::time_point{} ||
-        now - g_lastLog >= seconds(1)) {
+        now - g_lastLog >= seconds(2)) {
         g_lastLog = now;
-        Log::Write(std::string("[AutoWalk] follow: headingErr=") +
-                   std::to_string(headingErr) +
-                   " cte=" + std::to_string(cte) +
-                   " err=" + std::to_string(error) +
-                   " smoothed=" + std::to_string(g_smoothedError) +
-                   " fwd=(" + std::to_string(fwdX) + "," + std::to_string(fwdY) + ")" +
-                   " dir=(" + std::to_string(g_road.dirX) + "," + std::to_string(g_road.dirY) + ")");
+        Log::Write(std::string("[AutoWalk] follow: flags=") +
+                   std::to_string(g_state.flags) +
+                   " hasHit=" + std::to_string(haveSample && sample.hasHit) +
+                   " yawFrom=" + std::to_string(sample.yawFrom) +
+                   " smoothed=" + std::to_string(g_smoother.smoothed) +
+                   " deact=" + std::to_string(g_state.deactivateTime) +
+                   " react=" + std::to_string(g_state.reactivateTime));
     }
 }
 

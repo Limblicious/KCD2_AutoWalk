@@ -374,32 +374,11 @@ void RegisterConsoleSurface()
         "KCD2 AutoWalk: input pipeline diagnostic (symbol, posting flag, listeners, "
         "held queue, one test press).");
 
-    env->pConsole->RegisterCVarFloat(
-        "kcse_autowalk_steer_gain",
-        &AutoWalk::FollowController::g_steerGain,
-        12.0f,
-        0,
-        "KCD2 AutoWalk: mouse-delta steering gain per radian of heading error.");
-
-    env->pConsole->RegisterCVarFloat(
-        "kcse_autowalk_steer_max",
-        &AutoWalk::FollowController::g_steerMax,
-        5.0f,
-        0,
-        "KCD2 AutoWalk: max mouse delta per steering frame.");
-
-    env->pConsole->RegisterCVarFloat(
-        "kcse_autowalk_steer_lookahead",
-        &AutoWalk::FollowController::g_steerLookahead,
-        0.35f,
-        0,
-        "KCD2 AutoWalk: aim-ahead fraction of the current road segment.");
-
     int* invert = &AutoWalk::FollowController::g_steerInvert;
     env->pConsole->RegisterCVarInt(
         "kcse_autowalk_steer_invert",
         invert,
-        0,
+        1,
         0,
         "KCD2 AutoWalk: 1 to flip the steering direction.");
 

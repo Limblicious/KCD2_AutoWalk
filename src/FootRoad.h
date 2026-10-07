@@ -26,6 +26,7 @@ struct FootRoadProbe {
     float yawTo = 0.0f;
     bool pFromValid = false;
     bool pToValid = false;
+    bool failed = false;
     // Road segment endpoint positions (world).
     float fromX = 0.0f, fromY = 0.0f, fromZ = 0.0f;
     float toX = 0.0f, toY = 0.0f, toZ = 0.0f;
