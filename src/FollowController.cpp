@@ -37,7 +37,9 @@ using MovementRequestFn = void (*)(void* self, float dt, float* out);
 
 MovementRequestFn g_originalMovementRequest = nullptr;
 bool g_movementHookInstalled = false;
+bool g_movementHookAttempted = false;
 float g_pendingYawDelta = 0.0f;
+int g_hookMisses = 0;
 
 void MovementRequestHook(void* self, float dt, float* out)
 {
@@ -60,26 +62,21 @@ void MovementRequestHook(void* self, float dt, float* out)
 
 void EnsureMovementHook()
 {
-    if (g_movementHookInstalled) {
+    if (g_movementHookInstalled || g_movementHookAttempted) {
         return;
     }
-    auto* framework = CCryAction::GetInstance();
-    auto* player = framework
-        ? static_cast<wh::entitymodule::C_Player*>(framework->GetClientActor())
-        : nullptr;
-    if (!player) {
+    g_movementHookAttempted = true;
+
+    // The runtime vtable entries of C_ActorMovementController are
+    // interfuscator-rewritten to non-executable trampolines, so the hook
+    // targets the real function at its static image address: vf13
+    // 0x1804B8E88 (RVA 0x4B8E88; pinned libKCD2 offset, verified in Ghidra).
+    const auto moduleBase = reinterpret_cast<std::uintptr_t>(
+        GetModuleHandleA("WHGame.dll"));
+    if (!moduleBase) {
         return;
     }
-    void* controller = *reinterpret_cast<void**>(
-        reinterpret_cast<std::uintptr_t>(player) + 0x180);
-    if (!controller) {
-        return;
-    }
-    void** vtable = *reinterpret_cast<void***>(controller);
-    void* target = vtable[13];
-    if (!target) {
-        return;
-    }
+    void* target = reinterpret_cast<void*>(moduleBase + 0x4B8E88);
     if (MH_CreateHook(target, reinterpret_cast<void*>(&MovementRequestHook),
                       reinterpret_cast<void**>(&g_originalMovementRequest)) != MH_OK) {
         Log::Write("[AutoWalk] FollowController: movement hook create failed.");
@@ -518,7 +515,27 @@ void Tick()
         const float delta = WrapPi(g_smoother.smoothed - g_prevSmoothedYaw) * sign;
         g_prevSmoothedYaw = g_smoother.smoothed;
 
-        g_pendingYawDelta = delta;
+        if (g_movementHookInstalled) {
+            // Did the hook consume the previous frame's delta? (it zeroes
+            // the shared value when the movement request runs). If not, the
+            // interfuscated vtable path bypasses the static body -- fall
+            // back to the proven look-accum channel.
+            if (g_pendingYawDelta != 0.0f) {
+                g_hookMisses++;
+            } else {
+                g_hookMisses = 0;
+            }
+            if (g_hookMisses >= 3 && delta != 0.0f) {
+                if (auto* state = GetPhysicsState()) {
+                    state->m_lookAngleAccum.z += delta;
+                }
+            }
+            g_pendingYawDelta = delta;
+        } else {
+            if (auto* state = GetPhysicsState()) {
+                state->m_lookAngleAccum.z += delta;
+            }
+        }
 
         HoldForward();
         g_phase.store(Phase::Following);
