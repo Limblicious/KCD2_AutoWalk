@@ -383,6 +383,61 @@ Allocates 0x30 and calls S_OnPressController_Ctor(obj, S_HorseData*, moveAdapter
 - Horse animation/bridle path; the steering yaw itself flows through
   HorseYaw_SmoothCD, not here.
 
+## Phase F — Mounted camera / view seam
+
+### Function: HorseFlatYaw_To_RiderLookAccum (0x1806CCAF8, REL 37998)
+- `void HorseFlatYaw_To_RiderLookAccum(C_Actor* actor, const Quat* horseDelta)`.
+- Reads C_ActorPhysicsState at actor+0x238; builds the flat-yaw quat from
+  physicsState+0x34, quat-multiplies with the horse delta quat, converts to
+  euler, and **additively accumulates the yaw into physicsState+0x88
+  (m_lookAngleAccum)**. Then stores the quat back (FUN_1806442A8).
+- This is the mounted camera-decoupling seam: horse yaw flows into the actor
+  look accumulator, independent of the mouse-look request.
+
+### Function: C_ActorPhysicsState_Tick (0x1804415E0, REL 26156)
+- Advances transient/carried look deltas, ingests the look request
+  (param_2+0x18/0x20 -> +0x7C pending), applies limits (FUN_180441928), and
+  **zeroes m_lookAngleAccum (+0x88) at the end of every tick** (after the
+  camera compose has consumed it).
+- Frame order: glue adds yaw -> compose consumes -> tick zeroes.
+
+### Function: MountedCamera_Centering (0x180A501E8, REL 56442)
+- Camera recenter state machine on the rider camera object: builds the
+  centered quat, SmoothCD (frame+0x100 CameraCentering, +0x104/+0x108
+  CenteringTime/InCombat, CD constants 0x18409A490/0xA44C), and adds the
+  recenter yaw into the same m_lookAngleAccum. Wide/narrow view-limit
+  selection is road-index driven (param_3[0x24] vs RoadState_GetIndex);
+  view-limit values come from frame+0x158/0x15C/0x160
+  (ViewLimitWide/Narrow/Bottom), clamp via ActorViewLimit_Clamp (0x18053B508,
+  REL 30673).
+
+### Foot-adapter seam (derived)
+Henry's C_Player owns the same C_ActorPhysicsState (+0x238). The foot adapter
+adds its smoothed road-yaw delta to Henry's m_lookAngleAccum (+0x88) exactly
+like the horse glue; vanilla compose/clamp handle the rest. No mouse motion
+injection.
+
+## Phase G — Synthetic facade feasibility
+
+Native dependencies enumerated from the recovered code:
+
+| Dependency | Native usage | Foot handling |
+|---|---|---|
+| Road sampler (REL 194146 chain) | road acquisition | USE native (proven on facade) |
+| S_HorseRoadFollow / S_HorseData state | controller state | synthetic facade (proven) |
+| C_Horse+0x9E8 -> S_HorseData | back-pointer | set on facade |
+| S_HorseData+0 -> I_HorseRiderSync (FUN_1806CCCD4 -> vf[1]) | move-adapter gate in SetHoldLatchedImpl | NOT fabricable safely (null crashes) -> port the gate in C++ |
+| C_Horse+0x990 actor model (Horse_ModelQuery) | TickPhase1 gate | port in C++ (on foot: always false) |
+| m_pMove (+0x100) -> vf[1]/vf[0x18] | manual yaw blend, rider input | port: Henry's own input instead |
+| frame helper (REL 38017) cvars | all tuning constants | READ native at recovered offsets |
+| C_ActorPhysicsState (+0x238) | look accumulator | USE Henry's own |
+| chat-follow manager (C_Player+0xCE8) | engagement gate | USE Henry's real manager |
+
+Conclusion: run the native road sampler + read native cvars; port the
+controller/tick/state-machine logic faithfully in C++ (all branch-complete);
+apply the smoothed yaw through Henry's look accumulator. The native
+controller object itself is not required.
+
 ## Evidence standard
 
 For each native function/hook record game build, module, REL ID/signature, prototype, fields read/written, validation, failure behavior, and local runtime evidence.
