@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 
 #include <MinHook.h>
 
@@ -77,9 +78,21 @@ void EnsureMovementHook()
         return;
     }
     void* target = reinterpret_cast<void*>(moduleBase + 0x4B8E88);
-    if (MH_CreateHook(target, reinterpret_cast<void*>(&MovementRequestHook),
-                      reinterpret_cast<void**>(&g_originalMovementRequest)) != MH_OK) {
-        Log::Write("[AutoWalk] FollowController: movement hook create failed.");
+    // Diagnostics: the game's interfuscator patches function prologues at
+    // startup; a patched prologue makes MinHook's disassembler fail.
+    const auto* bytes = static_cast<const unsigned char*>(target);
+    char prologue[64];
+    std::snprintf(prologue, sizeof(prologue),
+                  "%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+                  bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5],
+                  bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11]);
+    const MH_STATUS status = MH_CreateHook(
+        target, reinterpret_cast<void*>(&MovementRequestHook),
+        reinterpret_cast<void**>(&g_originalMovementRequest));
+    if (status != MH_OK) {
+        Log::Write(std::string("[AutoWalk] FollowController: movement hook create failed (status=") +
+                   std::to_string(static_cast<int>(status)) +
+                   " prologue=" + prologue + ").");
         return;
     }
     if (MH_EnableHook(target) != MH_OK) {
@@ -539,6 +552,17 @@ void Tick()
                 }
             }
             g_pendingYawDelta = delta;
+
+            // Camera decoupling (first person): the on-foot look-body
+            // coupling rotates the view with the body's turn; counter-rotate
+            // the look state by the commanded delta so the view stays put
+            // while the body walks the road. The mouse still adds its own
+            // look on top (untouched request channel).
+            if (g_hookMisses < 3 && delta != 0.0f) {
+                if (auto* state = GetPhysicsState()) {
+                    state->m_lookAngles.z -= delta;
+                }
+            }
         } else {
             if (auto* state = GetPhysicsState()) {
                 state->m_lookAngleAccum.z += delta;

@@ -220,16 +220,11 @@ bool TickNativeRoadFollow(float dt, FootRoadProbe& out)
         if (rf->m_latched) {
             hd->m_magnetismLive = 1;
             hd->m_magnetHit = sample.m_hit;
-            // Pure pursuit: command the direction toward the road's along
-            // point (the sampler's follow target). On-center this is the
-            // road tangent; drifted it points back at the road -- the
-            // mounted return-to-path behavior. CryEngine world-yaw
-            // convention: atan2(fwd.x, fwd.y).
-            const float dx = sample.m_along.x - out.playerX;
-            const float dy = sample.m_along.y - out.playerY;
-            hd->m_magnetYaw = (dx * dx + dy * dy > 0.01f)
-                                  ? std::atan2(dx, dy)
-                                  : sample.m_yawFrom;
+            // The native command (HorseRoadFollow_PublishMagnetism):
+            // m_magnetYaw = sample.m_yawFrom -- the tangent at the nearest
+            // road point. On-center this is the road direction; the sampler
+            // tracks the nearest point, so it holds the road through curves.
+            hd->m_magnetYaw = sample.m_yawFrom;
         }
     } else if (rf->m_latched) {
         hd->m_magnetismLive = 0; // command persists; live flag clears
