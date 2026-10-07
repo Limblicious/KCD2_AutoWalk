@@ -1,5 +1,6 @@
 #include "FootRoad.h"
 
+#include <cmath>
 #include <cstring>
 #include <sstream>
 #include <type_traits>
@@ -192,6 +193,17 @@ bool TickNativeRoadFollow(float dt, FootRoadProbe& out)
     const bool ok = fn(rf, nullptr, 0.0f, &sample);
     CopySampleIntoProbe(sample, ok, out);
 
+    // Player world position from the client entity TM (+0x58 Matrix34:
+    // translation at +3/+7/+11).
+    auto* framework = CCryAction::GetInstance();
+    if (auto* entity = framework ? framework->GetClientEntity() : nullptr) {
+        const auto* tm = reinterpret_cast<const float*>(
+            reinterpret_cast<std::uintptr_t>(entity) + 0x58);
+        out.playerX = tm[3];
+        out.playerY = tm[7];
+        out.playerZ = tm[11];
+    }
+
     // The recovered OnPress tick flow (REVERSE_ENGINEERING.md): a hit keeps
     // the latch and publishes; a miss releases. The mounted sampler rarely
     // misses (its road cache persists), so the mounted horse keeps
@@ -208,7 +220,16 @@ bool TickNativeRoadFollow(float dt, FootRoadProbe& out)
         if (rf->m_latched) {
             hd->m_magnetismLive = 1;
             hd->m_magnetHit = sample.m_hit;
-            hd->m_magnetYaw = sample.m_yawFrom;
+            // Pure pursuit: command the direction toward the road's along
+            // point (the sampler's follow target). On-center this is the
+            // road tangent; drifted it points back at the road -- the
+            // mounted return-to-path behavior. CryEngine world-yaw
+            // convention: atan2(fwd.x, fwd.y).
+            const float dx = sample.m_along.x - out.playerX;
+            const float dy = sample.m_along.y - out.playerY;
+            hd->m_magnetYaw = (dx * dx + dy * dy > 0.01f)
+                                  ? std::atan2(dx, dy)
+                                  : sample.m_yawFrom;
         }
     } else if (rf->m_latched) {
         hd->m_magnetismLive = 0; // command persists; live flag clears

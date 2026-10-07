@@ -469,6 +469,11 @@ void Tick()
                    " hasHit=" + std::to_string(onRoad) +
                    " live=" + std::to_string(FootRoad::NativeMagnetismLive()) +
                    " magnetYaw=" + std::to_string(FootRoad::NativeMagnetYaw()) +
+                   " yawFrom=" + std::to_string(sample.yawFrom) +
+                   " along=(" + std::to_string(sample.alongX) + "," +
+                   std::to_string(sample.alongY) + ")" +
+                   " player=(" + std::to_string(sample.playerX) + "," +
+                   std::to_string(sample.playerY) + ")" +
                    " smoothed=" + std::to_string(g_smoother.smoothed) +
                    " rotMax=" + std::to_string(cvars->rotationMax) +
                    " accum=" + std::to_string(GetPhysicsState() ? GetPhysicsState()->m_lookAngleAccum.z : 0.0f));

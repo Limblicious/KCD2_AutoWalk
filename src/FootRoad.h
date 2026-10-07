@@ -27,6 +27,8 @@ struct FootRoadProbe {
     bool pFromValid = false;
     bool pToValid = false;
     bool failed = false;
+    // The player's world position (from the client entity TM, +0x58).
+    float playerX = 0.0f, playerY = 0.0f, playerZ = 0.0f;
     // Road segment endpoint positions (world).
     float fromX = 0.0f, fromY = 0.0f, fromZ = 0.0f;
     float toX = 0.0f, toY = 0.0f, toZ = 0.0f;
