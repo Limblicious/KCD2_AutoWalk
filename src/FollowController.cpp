@@ -37,6 +37,8 @@ std::chrono::steady_clock::time_point g_lastTick{};
 NativeMagnetism::OnPressState g_state{};
 NativeMagnetism::YawSmoother g_smoother{};
 float g_prevSmoothedYaw = 0.0f;
+float g_targetYaw = 0.0f;
+bool g_targetValid = false;
 
 FootRoad::FootRoadProbe g_cachedSample{};
 bool g_cachedSampleValid = false;
@@ -309,6 +311,8 @@ void Enable()
     g_state.flags &= ~0x10;
     g_smoother = {};
     g_prevSmoothedYaw = 0.0f;
+    g_targetYaw = 0.0f;
+    g_targetValid = false;
     Log::Write("[AutoWalk] FollowController: enabled (native-faithful).");
 }
 
@@ -317,6 +321,7 @@ void Disable()
     ReleaseForward();
     g_state.flags = 0;
     g_phase.store(Phase::Disabled);
+    g_targetValid = false;
     UpdatePromptFlags(false, false, false);
     Log::Write("[AutoWalk] FollowController: disabled.");
 }
@@ -394,6 +399,8 @@ void Tick()
         g_state.flags &= ~0x10;
         g_smoother = {};
         g_prevSmoothedYaw = 0.0f;
+        g_targetYaw = 0.0f;
+        g_targetValid = false;
         g_phase.store(Phase::AwaitingRoad);
         Log::Write("[AutoWalk] FollowController: engaged via hold E.");
     }
@@ -405,9 +412,11 @@ void Tick()
         return;
     }
 
-    // State machine with the recovered semantics.
+    // State machine with the recovered semantics. Off-road counts as a
+    // failed sample: the native OnPress phase-5 clears the active flag and
+    // the follow deactivates (prompt hidden).
     const bool manual = g_manualInput.exchange(false);
-    const bool failed = haveSample && sample.failed;
+    const bool failed = haveSample && (sample.failed || !sample.hasHit);
     const bool chat = IsChatFollowActive();
 
     // Manual WASD: camera re-couples to travel; held >3s deactivates.
@@ -445,7 +454,19 @@ void Tick()
     // m_viewRotation, and the on-foot body follows the view -- exactly the
     // mounted pipeline, with the mouse untouched on the request channel.
     if (following && !manualHeld) {
-        NativeMagnetism::SmoothCD(g_smoother, sample.yawFrom, dt, *cvars);
+        // Sample-acceptance gate recovered from SetHoldLatchedImpl: a sample
+        // is only accepted when within RoadMagnetismEnterAngle of the current
+        // command. The standalone facade flaps between two candidate road
+        // directions every other sample; without this native gate the
+        // smoother's sign-flip reset zeroes the command and steering dies.
+        if (!g_targetValid ||
+            std::abs(WrapPi(sample.yawFrom - g_targetYaw)) * 57.2957795f <=
+                cvars->enterAngle) {
+            g_targetYaw = sample.yawFrom;
+            g_targetValid = true;
+        }
+
+        NativeMagnetism::SmoothCD(g_smoother, g_targetYaw, dt, *cvars);
 
         if (!g_smoother.initialized) {
             g_smoother.initialized = true;
