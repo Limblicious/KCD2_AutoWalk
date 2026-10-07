@@ -296,6 +296,27 @@ vector region initialized with the same reserve helper.
 ### Function: PathHistory_PruneOlderThan (0x181ECA180)
 - lower_bound over 8-byte {flag,time} records: first index with `record.time >= now - window`.
 
+### Function: HorseRoadFollow_RebuildControllerMode (0x180A4E9B8)
+- Mode source: options object (FUN_1804aade0) + 0xB0, clamped to 0..2; forced 0 when the horse move-adapter chain is invalid (0x1806CCCD4/0x1804A8CE0).
+- On mode change: scalar-dtor the old controller, set m_mode (+0x70), then create:
+  - mode 1 -> S_OnPressController_Factory(&slot, S_HorseData*, FUN_181302a54(moveAdapter));
+  - mode 2 -> S_AutoController_Factory(&slot, S_HorseData*);
+  - mode 0 -> none.
+- m_pMagnetism (+0x68) = *slot. For the on-foot adapter, force mode 2 (auto) — the foot player has no rider adapter for mode 1.
+
+### Function: PathHistory_FlickScore (0x181ECA440)
+- `int PathHistory_FlickScore(AW_S_AutoController* c)` = RoadState_GetIndex(horse+0x7A0, HorseData_GetTag(horse)); caller rejects when result == 4 (off-road state).
+
+### Function: Road_SnapChooser (0x181EC9D50)
+- `bool Road_SnapChooser(const int* states, AW_S_AutoController* c)`: true when `S_HorseData+0x30` (m_horseState, E_HorseState) equals one of the 4 bytes of the caller's constant 0x060B0A00, i.e. states {0x00, 0x0A, 0x0B, 0x06}. Gate for snap acceptance.
+
+### Function: RoadSnap_TestVector (0x180A4E208) / RoadCart_TestPoints (0x180A4E2EC)
+- RoadSnap_TestVector builds a lambda capturing `frame+0x9C/+0xA0/+0xA4` (RoadMagnetismCartWidth/Height/CenterOffsetY, scaled by 0x18409A210) and calls RoadCart_TestPoints over the vector of points/entities.
+- RoadCart_TestPoints iterates an entity container (whGlobal+400 -> vf[0x70](id) per id; 0x38-byte records) and invokes the lambda per entity — the cart-box proximity test.
+
+### Function: RoadPath_AppendPointId (0x180A0B38C)
+- Appends road point ids (S_HorseRoadPoint.m_id, +0x28) into an int32 vector (m_pathB) with dedup: skips when last == from-id; pushes to-id after from-id; avoids consecutive duplicates.
+
 ## Evidence standard
 
 For each native function/hook record game build, module, REL ID/signature, prototype, fields read/written, validation, failure behavior, and local runtime evidence.
