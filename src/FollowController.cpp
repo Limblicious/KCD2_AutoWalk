@@ -493,12 +493,20 @@ void Tick()
     // the movement system while the look state (the camera) is untouched:
     // the mounted decoupling.
     if (following && !manualHeld) {
-        // The native sample command is accepted directly while following:
-        // the recovered enter-angle gate (SetHoldLatchedImpl gate 5) applies
-        // only when NOT latched (engagement); while latched the samples flow.
-        const float target = FootRoad::NativeMagnetYaw();
-        g_targetYaw = target;
-        g_targetValid = true;
+        // Sample-acceptance gate recovered from SetHoldLatchedImpl (gate 5):
+        // a sample is only accepted within RoadMagnetismEnterAngle of the
+        // current command. The standalone facade flips between road branches
+        // at crossroads (a 100+ degree command jump); the gate rejects the
+        // flips while passing slow legitimate curves -- the native
+        // path-continuity behavior.
+        const float rawTarget = FootRoad::NativeMagnetYaw();
+        if (!g_targetValid) {
+            g_targetYaw = rawTarget;
+            g_targetValid = true;
+        } else if (std::abs(WrapPi(rawTarget - g_targetYaw)) * 57.2957795f <=
+                   cvars->enterAngle) {
+            g_targetYaw = rawTarget;
+        }
 
         EnsureMovementHook();
         NativeMagnetism::SmoothCD(g_smoother, g_targetYaw, dt, *cvars);
@@ -552,6 +560,7 @@ void Tick()
                    " hasHit=" + std::to_string(onRoad) +
                    " live=" + std::to_string(FootRoad::NativeMagnetismLive()) +
                    " magnetYaw=" + std::to_string(FootRoad::NativeMagnetYaw()) +
+                   " target=" + std::to_string(g_targetYaw) +
                    " yawFrom=" + std::to_string(sample.yawFrom) +
                    " along=(" + std::to_string(sample.alongX) + "," +
                    std::to_string(sample.alongY) + ")" +
@@ -559,6 +568,7 @@ void Tick()
                    std::to_string(sample.playerY) + ")" +
                    " smoothed=" + std::to_string(g_smoother.smoothed) +
                    " rotMax=" + std::to_string(cvars->rotationMax) +
+                   " enterAngle=" + std::to_string(cvars->enterAngle) +
                    " velDelta=" + std::to_string(g_pendingYawDelta));
     }
 }
