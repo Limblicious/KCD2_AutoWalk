@@ -34,6 +34,10 @@ $dataSrc = Join-Path $repoRoot "package\kcd_autowalk\data"
 if (Test-Path -LiteralPath $dataSrc) {
     Copy-Item -LiteralPath $dataSrc -Destination $modRoot -Recurse
 }
+$locSrc = Join-Path $repoRoot "package\kcd_autowalk\Localization"
+if (Test-Path -LiteralPath $locSrc) {
+    Copy-Item -LiteralPath $locSrc -Destination $modRoot -Recurse
+}
 
 $zip = Join-Path $distRoot "KCD2_AutoWalk-$Version.zip"
 if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
