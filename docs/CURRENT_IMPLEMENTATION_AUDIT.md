@@ -899,3 +899,80 @@ B. Road-controller fidelity:
    sampler rather than continuing with yawFrom-only steering.
 
 Do not treat success in track A as evidence that track B is solved.
+
+
+---
+
+# Review of d959bb3 — mounted free-look mechanism identified
+
+This is the first camera finding that matches the requested behavior at the
+native ownership level.
+
+## What is now proven
+
+C_FocusCamera, owned at C_Player+0xCF0, is the native controller that:
+
+- increments the player's +0x174 hold through vf135 on activation;
+- captures the flat-view reference for mode 2;
+- tracks the horse target frame in the mounted rig;
+- applies target-relative view rotation and clamps through SetViewRotation;
+- releases the hold on deactivation.
+
+Therefore the native mounted free-look architecture is not:
+
+```text
+hold counter + SetFlatYaw
+```
+
+by itself.
+
+It is:
+
+```text
+independent horse/body movement
+        +
+C_FocusCamera-owned hold
+        +
+captured target-relative view frame
+        +
+target-relative limits / recenter behavior
+```
+
+This explains why the earlier manual camera counter-rotation and simple hold
+ideas could not reproduce horseback behavior.
+
+## Preferred foot-camera direction
+
+Before reimplementing any camera math, determine whether AutoWalk can install a
+native C_FocusCamera setup whose target frame follows Henry's independently
+controlled body.
+
+A direct self-target may not work: current RE says ShouldBeActive rejects the
+player's own soul. Recover the exact predicate/provider behavior first.
+
+If a custom target provider can expose Henry's body frame while satisfying the
+native activation predicate, this is preferable because it would reuse the
+same target-relative limits and update machinery as the mounted rig.
+
+## Remaining body actuator work
+
+controller+0x11C -> S_MountAnimState::m_rootRotation is confirmed, but the final
+consumer that turns Henry's animated/entity body remains unresolved.
+
+Trace that before implementing autonomous body yaw.
+
+## Road following is now ready for a separate faithful-port track
+
+The road-follow RE is substantially ahead of the current runtime code:
+
+- S_HorseRoadFollow::Tick flow is recovered;
+- S_AutoController latch/history logic is recovered;
+- exact GetRoadDistance / enter/remain gates are known;
+- pathB/backtrack history, snap gates, turn parameters and native CVars are
+  documented.
+
+The runtime still uses sampler-only yawFrom + custom steering.
+
+Do not wait for the camera work to continue the **static-to-C++ port** of the
+native road-controller state machine, but keep that port isolated from the
+camera/body implementation until both sides can be joined cleanly.
