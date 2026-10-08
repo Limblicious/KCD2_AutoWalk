@@ -325,23 +325,19 @@ m_pHorseData @0x18, m_deactivateTime @0x20, m_reactivateTime @0x24,
 m_hintTime @0x28, m_flags @0x2C (bit0 active, bit1 latched, bit3 flick,
 bit4 interrupted/armed).
 
-### Function: S_OnPressController vtable slot 1 (0x180A4E98C) — SIGNATURE MUST BE RECHECKED
-Earlier notes labeled this as `SetHoldLatched(bool)` because the body visibly
-updates bit1 from the latched argument. That mapping conflicts with the now
-branch-complete `S_HorseRoadFollow::Tick` call site, which invokes controller
-slot 1 with `(latched, hit, &sample)` and consumes a boolean return value.
+### Function: S_OnPressController vtable slot 1 (0x180A4E98C) — RESOLVED
+Call-site ABI: `bool slot1(this, latched, hit, sample*)`.
 
-The AutoController slot 1 was re-decompiled with the corrected 4-argument
-signature. Before implementing mode 1, re-decompile the OnPress slot 1 from the
-same top-level call-site ABI and recover:
+Disassembly shows that the OnPress implementation ignores `latched` and
+`sample`, clears bit1, writes bit1 from `hit`, then tail-jumps to
+`S_OnPressController_HintsActive`.
 
-- exact signature;
-- which of `latched`, `hit`, and `sample` it reads;
-- exact boolean return semantics;
-- whether the visible bit1 update is the whole function or only part of it.
-
-Do not build the mode-1 port around the old one-argument header declaration
-until this contradiction is resolved.
+Therefore:
+- bit1 is NOT the persistent top-level latch; it mirrors current sample hit;
+- persistent road-follow latch remains `S_HorseRoadFollow::m_latched`;
+- the return value is the HintsActive/active-allowed predicate;
+- the stale one-argument public-header declaration is invalid for this vtable
+  slot.
 
 ### Function: S_OnPressController_Tick (0x180A4E768)
 - Phase 0: if armed (bit4): rider input via `m_pMove(+0x100)->vf[0x18]()`; yaw below const OR move below 0.2 -> clear bit4 (interruption clears the armed state). Chat-follow active -> clear active/latch bits + zero timers (deactivate).
@@ -596,16 +592,39 @@ jmp  HintsActive                ; relocated tail-jump (rel32 zeroed on disk)
 - The function reads ONLY the hit (r8); the latched (rdx) and the sample
   (r9) arguments are UNUSED -- the tick's 4-arg call is the interface, the
   implementation consumes one of them.
-- The return (AL) = the tail-called HintsActive predicate `(flags & 1) != 0`
-  -- the ACTIVE bit, not void.
-- Semantics: bit1 mirrors the current sample hit; the return tells the tick
-  whether the controller is actively following. The old public header
+- The return (AL) is the tail-called `HintsActive` result, not void.
+- Semantics: bit1 mirrors the current sample hit; the return is the controller's
+  current active/allowed predicate used by the top-level tick.
+- IMPORTANT: older notes reconstruct `HintsActive` as including more than
+  bit0 (deactivate-time / armed-state checks). Re-decompile 0x180A4E99C and
+  settle the exact predicate before implementing mode 1; do not simplify it
+  to `flags & 1` unless the binary proves that. The old public header
   "void SetHoldLatched(bool latched)" is WRONG for this slot.
 - The tick's flow around it: slot3 GetRoadDistance -> wrapper sample ->
   slot2 Tick(phase 0) -> slot1 (bit1=hit, returns active) ->
   if !hit || !active: release (latched=0, phase 3); else if !latched:
   Tick(4) (enter -> bit0), latched=1, Tick(2), UpdateTurnParams,
   PushPathB, Publish; finally Tick(1).
+
+### Remaining mode-1 activation gates before port rewrite
+
+Two native pieces remain required before the mode-1 controller can be called
+branch-complete:
+
+1. **Phase 4** of `S_OnPressController::Tick`.
+   `S_HorseRoadFollow::Tick` calls phase 4 on the transition from
+   `m_latched == false` to a successful first follow tick. The current phase
+   table omits phase 4 entirely. Recover its exact reads/writes/timers/flags.
+
+2. **The native hold-E action -> bit0 active setter**.
+   Slot 1 is evaluated before phase 4 and returns the active/allowed predicate,
+   so bit0 must already be established by another native path when the rider
+   requests magnetism. Trace the real `horse_magnetism_activate/deactivate`
+   action/listener/state-machine path into `S_OnPressController::m_flags bit0`.
+
+Until both are recovered, do not emulate activation by directly setting bit0 in
+the foot port. The existing custom foot prompt/input can trigger the port only
+after we know what native state transition it is supposed to reproduce.
 
 ### OnPress phases for the mode-1 port (branch-by-branch mapping)
 Recovered S_OnPressController_Tick (0x180A4E768), fields +0x20 deactivate,
