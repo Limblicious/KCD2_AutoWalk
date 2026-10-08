@@ -34,6 +34,9 @@ Copy-Item -LiteralPath (Join-Path $source "KCSE\Plugins\KCD2_AutoWalk.dll") -Des
 if (Test-Path -LiteralPath (Join-Path $source "data")) {
     Copy-Item -LiteralPath (Join-Path $source "data") -Destination $target -Recurse -Force
 }
+if (Test-Path -LiteralPath (Join-Path $source "Localization")) {
+    Copy-Item -LiteralPath (Join-Path $source "Localization") -Destination $target -Recurse -Force
+}
 
 Write-Host "Installed only: $target"
 Write-Host "KCSE and Address Library were verified but not modified."
