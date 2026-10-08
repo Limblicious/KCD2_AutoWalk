@@ -369,12 +369,34 @@ Allocates 0x30 and calls S_OnPressController_Ctor(obj, S_HorseData*, moveAdapter
      frame+0xEC (RotationSmoothOutSpeed, when m_magnetYaw==0) vs frame+0xF0
      (RotationSmoothInSpeed); step clamped to +/-omega; writes m_yawSmoothed
      (+0x128) and m_yawVel (+0x12C).
-  6. Output: FUN_18059BBF8(out, {0, m_yawSmoothed}); then via
-     [C_Horse+0x9E8]->vf[8]() rider-sync object -> vf[0x40](&{0, m_yawSmoothed},
-     m_magnetismLive) — the exact downstream application boundary (horse yaw
-     into the rider view/sync, gated by magnetism-live).
+   6. Output: FUN_18059BBF8(out, {0, m_yawSmoothed}); then via
+      [C_Horse+0x9E8]->vf[8]() rider-sync object -> vf[0x40](&{0, m_yawSmoothed},
+      m_magnetismLive) — the exact downstream application boundary (horse yaw
+      into the rider view/sync, gated by magnetism-live).
 - Foot adapter: reproduce this exact smoothing (same cvars) and apply the
   output to Henry's view instead of the rider-sync object.
+
+### Function: I_HorseRiderSync::PushRiderAction (0x18059BC40) — Gate A
+- Recovered signature: `void PushRiderAction(void* sync, const Quat* in, bool skip)`.
+- Gate: runs only while `*(sync+0x18) & 1` (sync active flag) and !skip.
+- `FUN_18059BBF8(request, quat)` converts the quat into the movement request's
+  turn accumulator at **request+0x88** (a Vec3): on the request's first use
+  (flag bit 0x40 clear) it OVERWRITES the vec with the quat xyz; on subsequent
+  updates before consumption it ADDS (accumulates) the quat xyz.
+- The request then flows to the consumer: `*(sync+0x28)` (= the
+  C_RiderPlayerControl) -> vf[0x228] (slot 69) -> object -> vf[8](object,
+  request) — the horse movement-request applier.
+- **Semantics established**: `{0, m_yawSmoothed}` is a yaw-only "quat" whose
+  **y = the per-update turn amount** (a delta/rate-limited command, NOT a
+  heading). The consumer applies the accumulated value to the horse body each
+  update; the per-frame rate limit lives inside the CD step itself
+  (omega = dt * RotationMax), so the downstream applies the smoothed value
+  DIRECTLY with no further dt multiplication.
+- Consequence for the foot port: the travel frame must integrate
+  `travelYaw += smoothed` per update (no dt factor), and the CD target must be
+  a relative turn command (the port computes `WrapPi(roadDir - travelYaw)`);
+  the sampler's yawFrom is the facing-normalized world direction of the
+  from->to road segment acting as the command target.
 
 ### Function: HorseSM_ApplyLookSteer (0x1829F2324)
 - The smOut 0x2C branch: anim-state triggers ("HRAC_KUN_POBIDKY"/"HRAC_SPURRING"),
