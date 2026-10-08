@@ -1322,3 +1322,111 @@ explicit Henry substitutions for rider input/jump/chat/action request
 ```
 
 with all S_AutoController-only history/snap/flick acceptance machinery deleted.
+
+
+---
+
+# Review of 1748618 — Track B RE gate CLOSED
+
+The remaining mode-1 ambiguities are now resolved:
+
+- phase 4 is a no-op for S_OnPressController;
+- hold-E action state owns bit0;
+- slot 1 mirrors sample hit into bit1;
+- slot 1 returns the exact HintsActive predicate;
+- the mode-1 phase table is branch-complete.
+
+Track B may now proceed to a **pure mode-1 RoadFollowPort rewrite**, but must
+remain unwired until deterministic state-machine tests pass.
+
+## Correct mode-1 state meanings
+
+Use:
+
+- S_HorseRoadFollow::m_latched = persistent top-level road-follow latch;
+- OnPress bit0 = action-controlled active/requested state;
+- OnPress bit1 = current sample hit mirror;
+- OnPress bit2 = second engage/state bit cleared with bit0 by native teardown
+  paths; preserve exact recovered writes even though its higher-level role is
+  not yet named;
+- OnPress bit3 = failure/flick-related state;
+- OnPress bit4 = interruption armed.
+
+Do not call bit1 "latched" anywhere in the port.
+
+## Exact slot-1 predicate
+
+After mirroring hit into bit1, slot 1 returns:
+
+```text
+(flags & 1)
+&& !(deactivateTime > 0)
+&& !(flags & 0x10)
+```
+
+So during a manual interruption the top-level road latch can temporarily drop
+while the OnPress controller itself remains action-active. This is how the
+native controller can later relatch without requiring another hold-E action.
+
+## Pure mode-1 rewrite scope
+
+Delete from RoadFollowPort:
+
+- S_AutoController acceptance gates;
+- Auto enter/remain angle gates;
+- Auto path-history records / SnapTime history;
+- Auto flick-score / Road_SnapChooser acceptance;
+- any hybrid "manualInput rejects acceptance" logic.
+
+Preserve/port:
+
+1. OnPress GetRoadDistance(latched);
+2. native sampler;
+3. OnPress phase 0;
+4. slot 1 (hit mirror + HintsActive);
+5. common S_HorseRoadFollow release/success control flow;
+6. phase 4 call site (no-op implementation);
+7. phase 2 interruption arming;
+8. common UpdateTurnParams;
+9. common PushPathB rolling last-10 history;
+10. common PublishMagnetism;
+11. phase 1 countdown/hints/jump teardown;
+12. phase 3 sustained interruption teardown;
+13. phase 5 sample-failure behavior when invoked by the recovered common flow;
+14. hold-E custom foot action mapped to the recovered bit0 action-controlled
+    state transition.
+
+## Manual-control ownership vs controller interruption
+
+Keep these separate:
+
+- **movement ownership:** any W/A/S/D gives vanilla on-foot movement immediate
+  authority while the key is held;
+- **OnPress interruption state:** emulate the native rider turn/move thresholds
+  to decide whether that manual intervention arms/deactivates road magnetism.
+
+Therefore "any WASD = manual movement now" does NOT mean
+"any WASD = clear bit0/latch now."
+
+## Required deterministic tests before wiring
+
+At minimum:
+
+1. hold-E/action bit0 on + road hit -> first latch succeeds;
+2. release E after activation -> follow remains according to native action
+   semantics already recovered;
+3. no hit -> top-level unlatch without corrupting action state;
+4. slot1 hit mirror toggles bit1 only;
+5. W-only manual ownership does not automatically destroy controller state;
+6. brief A/D interruption -> armed state -> release before grace expiry ->
+   controller becomes eligible to relatch;
+7. sustained A/D -> deactivate/reactivate timers -> bit0/bit2 teardown;
+8. jump/chat path clears exact native bits/timers;
+9. sample.failed -> phase5 exact bit/timer writes;
+10. pathB remains the rolling last 10 point IDs with native dedup order;
+11. common publish writes magnetismLive/magnetHit/magnetYaw from sample;
+12. repeated ticks never produce contradictory top-level latch vs controller
+    active/hit flags beyond the transient states present in native flow.
+
+Only after these pass should RoadFollowPort replace the sampler-only runtime
+path.
