@@ -547,8 +547,11 @@ void Tick()
 
         const float cmd = WrapPi(g_targetYaw - g_travelYaw);
         NativeMagnetism::SmoothCD(g_smoother, cmd, dt, *cvars);
-        const float sign = g_steerInvert ? -1.0f : 1.0f;
-        g_travelYaw += g_smoother.smoothed * sign;
+        // The smoothed command chases the travel frame toward the road
+        // direction: plain integration (the -1 inversion was the leftover
+        // prototype knob; the log showed the travel yaw running away past
+        // pi -- the circle -- with it).
+        g_travelYaw += g_smoother.smoothed;
 
         g_followActive.store(true);
         HoldForward();
