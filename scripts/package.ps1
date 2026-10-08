@@ -23,8 +23,27 @@ if (Test-Path -LiteralPath $modRoot) {
 }
 
 New-Item -ItemType Directory -Force -Path $plugins | Out-Null
-Copy-Item -LiteralPath (Join-Path $repoRoot "package\kcd_autowalk\mod.manifest") -Destination $modRoot
-Copy-Item -LiteralPath (Join-Path $repoRoot "package\kcd_autowalk\mod.cfg") -Destination $modRoot
+
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+# The manifest version follows the requested package version (the source
+# template keeps its development marker).
+$manifestSrc = Join-Path $repoRoot "package\kcd_autowalk\mod.manifest"
+$manifestXml = Get-Content -LiteralPath $manifestSrc -Raw
+$manifestXml = [System.Text.RegularExpressions.Regex]::Replace(
+    $manifestXml, '(?s)(<info>.*?<version>)[^<]*(</version>)', ('${1}' + $Version + '${2}'))
+[System.IO.File]::WriteAllText((Join-Path $modRoot "mod.manifest"), $manifestXml, $utf8NoBom)
+
+# Configuration-specific settings: Release ships with development logging
+# disabled; Debug keeps the diagnostics.
+$cfgSrc = Join-Path $repoRoot "package\kcd_autowalk\mod.cfg"
+$cfg = Get-Content -LiteralPath $cfgSrc -Raw
+if ($Configuration -eq "Release") {
+    $cfg = [System.Text.RegularExpressions.Regex]::Replace(
+        $cfg, 'kcse_autowalk_debug\s+[0-9]+', 'kcse_autowalk_debug 0')
+}
+[System.IO.File]::WriteAllText((Join-Path $modRoot "mod.cfg"), $cfg, $utf8NoBom)
+
 Copy-Item -LiteralPath $dll -Destination (Join-Path $plugins "KCD2_AutoWalk.dll")
 
 # Mod data pak (patched vanilla action profile + help rows).

@@ -3,7 +3,7 @@
   <info>
     <name>KCD2 AutoWalk</name>
     <modid>kcd_autowalk</modid>
-    <description>On-foot road following using KCD2's native horse road-magnetism logic.</description>
+    <description>Follow roads on foot: hold E to latch onto the path and Henry walks it automatically.</description>
     <author>Limblicious</author>
     <version>0.1.0-dev</version>
     <created_on>2026-10-05</created_on>

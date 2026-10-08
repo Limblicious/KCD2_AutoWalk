@@ -3,6 +3,10 @@
 /dist/
 /out/
 
+# Generated mod data paks (contain redistributed vanilla game config; regenerated at package time)
+/package/kcd_autowalk/data/
+/package/kcd_autowalk/Localization/
+
 # vcpkg manifest install tree
 /vcpkg_installed/
 

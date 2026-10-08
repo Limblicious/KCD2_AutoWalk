@@ -1,147 +1,98 @@
 # KCD2 AutoWalk
 
-Native KCSE mod for **Kingdom Come: Deliverance II** intended to make Henry follow roads on foot by reusing the game's **actual mounted road-magnetism / road-follow controller**, not by approximating it with custom steering.
+Follow roads on foot in **Kingdom Come: Deliverance II**. Stand on a road, hold **E** like you would on horseback, and Henry latches onto the path and walks it by himself.
 
-## Target behavior
+AutoWalk is a native [KCSE](https://www.nexusmods.com/kingdomcomedeliverance2/mods/3332) plugin. It does not fake the road following with custom steering: it translates the game's own mounted road-magnetism controller onto Henry's on-foot locomotion, so the road choice, continuity, forks and backtracking behave like the vanilla horse feature.
 
-The intended experience should mirror vanilla horseback path follow:
+## What it does
 
-1. Henry is on foot and near/on a valid road.
-2. The player **holds E** to engage path follow, matching the vanilla horse interaction.
-3. Once engaged and the player is **not touching WASD**:
-   - KCD2's native horse road-follow controller determines the road, continuation, and steering;
-   - Henry continues moving forward using normal on-foot locomotion;
-   - Henry's travel/facing direction is **decoupled from camera yaw**;
-   - mouse look is free so the player can enjoy the scenery;
-   - look rotation is constrained by the **same mounted camera/view limits** used while riding (no unrestricted 360-degree spin).
-4. When the player supplies **W/A/S/D**:
-   - manual movement immediately becomes authoritative;
-   - movement uses normal on-foot camera-relative controls;
-   - mouse look behaves normally for manual locomotion;
-   - the native magnetism controller remains responsible for whether road follow survives the intervention or naturally deactivates after enough deviation/input, just as it does on horseback.
-5. When manual movement stops:
-   - if vanilla magnetism is still active/latched, autonomous road following resumes;
-   - if vanilla logic has disengaged it, Henry remains under normal manual control until the player holds E again.
+- **Hold E** near a road to engage path following — the same prompt and latching feel as on horseback.
+- While following and **not touching WASD**, Henry walks the road automatically using the native road-follow logic.
+- Pressing **W/A/S/D** immediately hands control back to normal movement; the follow state survives like it does on horseback. Release the keys and Henry resumes if the road latch is still active.
+- Opening any menu (ESC, inventory, map, perks, alchemy, ...) suspends the auto-input so menus never scroll on their own, and following resumes when you close them.
+- Henry shows a proper hint when he is not on a suitable road.
+- Normal walking, sprinting, stamina, combat and everything else are untouched. The mod only acts on foot.
 
-Caps Lock, Shift, stamina, collision, slopes, animation, and normal on-foot movement speed remain vanilla.
+## Requirements
 
-## Important architecture rule
+- Kingdom Come: Deliverance II (Steam) **1.5.6**
+- [Kingdom Come Script Extender (KCSE)](https://www.nexusmods.com/kingdomcomedeliverance2/mods/3332)
+- A KCSE Address Library for 1.5.6 (`kcd_addresslib_steam_release_1_5-15693.bin`)
 
-This project must **not** reproduce horse path following with a homemade tangent/CTE/PID-style controller if the native controller can be executed or translated directly.
+KCSE and the Address Library are separate downloads and are not bundled with this mod.
 
-The current experimental implementation on `main` proves that Henry can be moved and that native roads can be sampled, but its 15 Hz road sampling + custom cross-track correction + synthetic mouse steering is **not the target implementation**. That code is diagnostic/prototype work only.
+## Installation
 
-The next implementation phase is to reverse the complete mounted pipeline:
+KCSE loads native plugins from the game's `Mods` folder.
 
-- `S_HorseRoadFollow::Tick`
-- `S_AutoController::Tick`
-- `S_OnPressController` / hold-to-engage behavior
-- native path vectors, hysteresis, crossroad prediction, backtracking, snap/trend logic
-- how rider WASD influences magnetism and disengagement
-- native `m_magnetYaw` / smoothing output
-- rider camera decoupling, mounted camera limits, and camera recentering
+1. Install **KCSE**: put its `dinput8.dll` into `...\KingdomComeDeliverance2\Bin\Win64MasterMasterSteamPGO\`.
+2. Install the **KCSE Address Library**: the game root must contain `KCSE\addresslib\kcd_addresslib_steam_release_1_5-15693.bin`.
+3. Install **AutoWalk**: copy the `kcd_autowalk` folder into `...\KingdomComeDeliverance2\Mods\` so the game root looks like:
 
-Then the mod should reuse that behavior with a dismounted actuator.
+```text
+KingdomComeDeliverance2/
+├─ Bin/Win64MasterMasterSteamPGO/dinput8.dll   (KCSE)
+├─ KCSE/addresslib/kcd_addresslib_*.bin        (Address Library)
+└─ Mods/
+   └─ kcd_autowalk/
+      ├─ mod.manifest
+      ├─ mod.cfg
+      ├─ data/AutoWalkData.pak
+      ├─ Localization/English_xml.pak
+      └─ KCSE/Plugins/KCD2_AutoWalk.dll
+```
 
-## Current status
+### Steam Workshop note
 
-The workstation has already demonstrated:
+Subscribing on the Steam Workshop delivers the mod's data and localization packs, but KCSE currently discovers native plugins **only in the game's `Mods` folder** — it does not read Steam Workshop content directly. After subscribing, make sure the mod also ends up in `Mods\kcd_autowalk` (copy the downloaded Workshop folder there, or simply install the ZIP manually). If the game version or KCSE ever gains native Workshop plugin loading, this step becomes unnecessary.
 
-- clean KCSE build/install;
-- native road sampling from Henry's position;
-- synthetic held-W movement;
-- synthetic input events;
-- a first experimental on-foot road follower.
+## How to use
 
-That experimental follower is intentionally considered **superseded architecture** because it turns the camera to steer Henry and bypasses most of KCD2's native road-follow state machine.
+1. Stand on or near a road.
+2. **Hold E** until the prompt engages (same interaction as mounting path follow).
+3. Hands off — Henry follows the road.
+4. **W/A/S/D** take over immediately; let go to resume.
+5. Menus pause and resume following automatically.
+
+## Known limitations
+
+- While following, the camera stays tied to Henry's travel heading. The mounted-style decoupled look (free camera like on horseback) is not implemented yet.
+- Henry's warning text ("Henry is not on suitable road") is localized in English; other languages show the vanilla text.
+- The hold-E prompt requires shipping full replacements of two vanilla input config files. A future game update that changes those files may require a mod update.
+- Quick-save (F5) while following is untested and out of scope for this release.
 
 ## Compatibility
 
-Pinned libKCD2:
+- KCD2 Steam **1.5.6** (build `release_1_5-15693`)
+- KCSE with a matching Address Library
+- libKCD2 pinned: `10d20f28faba462c4bf98a01abb48225cc51bb91`
 
-`10d20f28faba462c4bf98a01abb48225cc51bb91`
-
-Current runtime target:
-
-- KCD2 Steam 1.5.6
-- build `release_1_5-15693`
-- KCSE
-- matching KCSE Address Library
-
-## Build
+## Building from source
 
 ```powershell
 git clone https://github.com/Limblicious/KCD2_AutoWalk.git
 cd KCD2_AutoWalk
 .\scripts\bootstrap.ps1
-.\scripts\build.ps1 -Configuration Debug
+.\scripts\build.ps1 -Configuration Release
+.\scripts\package.ps1 -Configuration Release -Version 0.1.0
 ```
 
-Package/install:
+`.\scripts\install.ps1 -Configuration Release` packages and installs into the local game `Mods` folder.
 
-```powershell
-.\scripts\package.ps1 -Configuration Debug
-.\scripts\install.ps1 -Configuration Debug
-```
+## Development and reverse engineering
 
-Or:
+The road-follow implementation was recovered from `WHGame.dll` (Ghidra 12.1.4 + GhidraMCP) and mirrors the native mounted pipeline:
 
-```powershell
-.\scripts\dev.ps1 -Configuration Debug
-```
+- `S_HorseRoadFollow::Tick` / `S_AutoController` / `S_OnPressController` semantics
+- hold-to-engage latching (`HintsActive`, OnPress slot-1)
+- path sampling, magnetism, and yaw smoothing (`PublishMagnetism`, `HorseYaw_SmoothCD`)
+- rider input interruption and resume behavior
+- menu/full-UI mode hooks for input suspension
 
-## Installed layout
+The pure state machine lives in `src/RoadFollowMachine.*` with deterministic tests in `tests/RoadFollowMachineTests.cpp`.
 
-```text
-KingdomComeDeliverance2/
-└─ Mods/
-   └─ kcd_autowalk/
-      ├─ mod.manifest
-      ├─ mod.cfg
-      ├─ KCD2_AutoWalk.log
-      └─ KCSE/
-         └─ Plugins/
-            └─ KCD2_AutoWalk.dll
-```
-
-## Next game-PC task
-
-Do **not** continue tuning the current prototype follower.
-
-On the game PC:
-
-```powershell
-git pull --ff-only
-.\scripts\prepare-re.ps1
-```
-
-Then follow:
-
-- `docs/RE_WORKSTATION.md`
-- `docs/OPENCODE_RE_TASK.md`
-- `docs/DECOMPILATION_PLAN.md`
-
-The repo already contains:
-
-- `re/seed_manifest.json` — known functions, REL IDs, vtables, RTTI, and vanilla road-chooser anchors;
-- `re/type_layouts.json` — mapped controller/view-state layouts;
-- `re/horse_cvars.json` — named road-magnetism/steering/camera CVar offsets;
-- `re/ghidra_scripts/ApplyAutoWalkSeeds.java` — applies known function/vtable/RTTI names and resolves controller vtables;
-- `re/ghidra_scripts/DumpAutoWalkVtables.java` — prints concrete controller vtable slot targets;
-- `re/autowalk_types.h` — Ghidra-importable known controller/view-state layouts.
-
-The goal of the first local session is to decompile the actual `S_AutoController` and `S_HorseRoadFollow` implementation, not to modify Henry's movement.
-
-## Reverse-engineering direction
-
-The preferred local workflow is **Ghidra 12.1.4 + GhidraMCP v0.9.0 + OpenCode**, using a copied `WHGame.dll` and a Ghidra project under ignored `.re/`.
-
-GhidraMCP runs locally inside Ghidra and exposes decompilation, xrefs, symbols, prototypes, data types/structs, RTTI, and vtable analysis to OpenCode. Existing libKCD2 symbols/REL IDs are applied as seeds instead of starting from an unnamed binary.
-
-See `docs/GHIDRA_SETUP.md` for the exact tool versions and connection procedure.
-
-See `docs/ARCHITECTURE.md`, `docs/REVERSE_ENGINEERING.md`, `docs/TEST_PLAN.md`, and `AGENTS.md`.
+See `docs/ARCHITECTURE.md`, `docs/REVERSE_ENGINEERING.md`, `docs/TEST_PLAN.md`, and `AGENTS.md` for the full record.
 
 ## License
 
-GPL-3.0.
+GPL-3.0
