@@ -482,11 +482,16 @@ Semantics established without the last hop: the smoothed value is a
 per-update turn AMOUNT accumulated by the consumer (not a heading); the
 rate limit lives in the CD step (omega = dt*RotationMax).
 
-### Foot-adapter seam (derived)
-Henry's C_Player owns the same C_ActorPhysicsState (+0x238). The foot adapter
-adds its smoothed road-yaw delta to Henry's m_lookAngleAccum (+0x88) exactly
-like the horse glue; vanilla compose/clamp handle the rest. No mouse motion
-injection.
+### Foot-adapter seam (superseded / do not implement)
+An earlier proposal added road steering to Henry's m_lookAngleAccum (+0x88).
+That channel is part of the VIEW integrator and is not the preferred autonomous
+body-steering seam.
+
+Current lead: use the scoped +0x174 hold to prevent view yaw from rebuilding
+flat yaw, then update flat yaw independently. However, before implementation,
+trace C_ActorMovementController / downstream body-orientation consumers to
+prove that m_flatYaw/m_flatYawQuat actually drive Henry's physical body-facing
+state rather than only a view reference.
 
 ## Phase G — Synthetic facade feasibility
 
