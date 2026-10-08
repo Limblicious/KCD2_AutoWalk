@@ -627,25 +627,44 @@ the foot port. The existing custom foot prompt/input can trigger the port only
 after we know what native state transition it is supposed to reproduce.
 
 ### OnPress phases for the mode-1 port (branch-by-branch mapping)
-Recovered S_OnPressController_Tick (0x180A4E768), fields +0x20 deactivate,
-+0x24 reactivate, +0x28 hintTime, +0x2C flags (bit0 active, bit1 latched,
-bit3 flick, bit4 armed):
-- Phase 0 (armed): rider stick (m_pMove->vf[0x18]) below the const OR
-  move <= 0.2 -> clear bit4 (interruption clears on return-to-neutral);
-  chat-follow -> clear active/latched + zero timers (deactivate).
-- Phase 1: countdown m_deactivateTime + m_hintTime; every 10th frame set
-  C_Player+0xB08+0x110 = 1 (hint visibility); jump request
-  (horseData+0x10C) -> clear active/latched.
-- Phase 2: reset m_deactivateTime; if |riderYaw|*deg < RemainAngle OR
-  move <= 0.2 -> stay; else set bit4 (armed) + copy DeactivateTime/
-  ReactivateTime from the cvars.
-- Phase 3: countdown m_deactivateTime then m_reactivateTime; at 0 -> clear
-  active/latched + timers (sustained manual input deactivates).
-- Phase 5: sample.m_failed -> clear bit0, set bit3 (flick), zero timers.
+Exact decompile of S_OnPressController_Tick (0x180A4E768); fields +0x20
+deactivate, +0x24 reactivate, +0x28 hintTime, +0x2C flags (bit0 active,
+bit1 = the sample HIT mirror [see slot-1 ABI], bit2 = second engage flag
+[cleared together with bit0 by phase 3 and the chat/jump path -- role
+exact], bit3 flick, bit4 armed):
+- Phase 0 (armed): rider stick (m_pMove->vf[0x18] -> turn/move) -- if
+  turn < DAT_1840B8640 OR move < DAT_18409EE58 -> clear bit4 (the
+  interruption clears on return-to-neutral). Then the chat-follow check:
+  [whGlobal -> player +0xCE8]->vf[8]() -> cVar3.
+- Phase 1: countdown +0x20 and +0x28; every 10th frame (frame-counter
+  %10==0) set C_Player+0xB08+0x110 = 1; jump request (horseData+0x10C)
+  -> cVar3.
+- Phase 2: reset +0x20 = 0; the rider input: (turn & mask) * const <
+  frame+0x88 (RemainAngle) -> stay (return); move <= DAT_184099F88 ->
+  stay; else set bit4 + copy frame+0x204/+0x208 into +0x20/+0x24.
+- Phase 3: if +0x20 <= 0: +0x24 -= dt (clamp 0); if +0x24 > 0 -> return;
+  else clear 0xFA (bits 0 AND 2) + zero +0x20/+0x24.
+- Phase 4: **NO-OP** -- the dispatch falls through `if (param_3 != 5)
+  return;`. The "enter" is NOT a tick phase.
+- Phase 5: if sample.m_failed == 0 -> return; else clear bit0 (0xFE),
+  set bit3 (flick), zero the timers.
+- After phases 0/1: cVar3 (chat-follow or jump) -> clear 0xFA + zero
+  the timers.
+- The bit0 (active) setter lives in the hold-E ACTION path (the ctor's
+  registered functor -- engage sets bit0, the deactivate hint clears it);
+  the functor's invoke is interfuscator-runtime-patched, so its exact
+  body is unverifiable statically -- the tick's slot-1 predicate
+  (HintsActive) gates the follow on it. The port therefore models bit0
+  as the action-controlled engage bit.
 - Foot adaptation: the rider stick/move becomes Henry's WASD held state
   (no analog stick on foot); phase 2 arms when WASD is held beyond the
   tolerance, phase 0 clears the armed state when WASD returns neutral --
   brief WASD interruption/resume, sustained WASD deactivates via phase 3.
+
+### HintsActive (0x180A4E99C) -- the exact predicate
+`(flags & 1) && !(deactivateTime > 0) && !(flags & 0x10)` -- active AND
+the deactivate timer at 0 AND not armed. This is the boolean the slot-1
+tail-jump returns to the tick (cVar4), gating whether the follow proceeds.
 
 ### Mounted FocusCamera setup tracker fill (from Activate 0x1808B9DB8)
 The tracker (C_FocusCamera+0x38) is filled on activation:
