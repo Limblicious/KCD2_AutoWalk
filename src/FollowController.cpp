@@ -229,7 +229,9 @@ bool IsGamePausedOrLoading()
     using PauseFn = bool (*)(void*, std::uint16_t);
     const auto pauseFn = *reinterpret_cast<PauseFn*>(vtable + 14 * 8);
     if (pauseFn) {
-        for (std::uint16_t i = 0; i < 3; ++i) {
+        // CCryAction keeps 15 pause-source counters; scan them all so any
+        // pause (menu, cutscene, debug, load, etc.) releases the hold.
+        for (std::uint16_t i = 0; i < 15; ++i) {
             if (pauseFn(framework, i)) {
                 return true;
             }
