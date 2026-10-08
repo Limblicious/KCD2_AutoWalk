@@ -48,8 +48,12 @@ if (-not $profileIn -or -not $helpIn) {
 $dataOut = Join-Path $repoRoot "package\kcd_autowalk\data"
 New-Item -ItemType Directory -Force -Path $dataOut | Out-Null
 $pakOut = Join-Path $dataOut "AutoWalkData.pak"
+$locDir = Join-Path $repoRoot "package\kcd_autowalk\Localization"
+New-Item -ItemType Directory -Force -Path $locDir | Out-Null
+$locOut = Join-Path $locDir "English_xml.pak"
 
-& python (Join-Path $PSScriptRoot "patch_mod_data.py") $profileIn $helpIn $pakOut
+& python (Join-Path $PSScriptRoot "patch_mod_data.py") $profileIn $helpIn $pakOut $locOut
 if ($LASTEXITCODE -ne 0) { throw "patch_mod_data.py failed." }
 
 Write-Host "Mod data pak: $pakOut (from $pakName)"
+Write-Host "English localization pak: $locOut"
