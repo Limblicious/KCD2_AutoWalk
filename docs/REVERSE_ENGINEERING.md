@@ -798,3 +798,19 @@ implementation.
 Therefore the OnPress slot-1 function at `0x180A4E98C` must be re-decompiled
 with the corrected call-site prototype before any mode-1 C++ port is considered
 branch-faithful.
+
+
+### Sampler facade layout WARNING — +0x668/+0x7A0 stale identification
+
+Earlier sampler notes identify `C_Horse+0x668` and `C_Horse+0x7A0` as
+road-state/cache dependencies. Current upstream typed layout contradicts that:
+
+- `C_Actor+0x668 = C_Soul* m_pSoul`;
+- `C_Actor+0x7A0 = C_BoneSlotSystem`.
+
+Because C_Horse inherits C_Actor at base offset 0, the standalone facade's
+`roadCache[0xCC0]` currently written to horse+0x668 is not type-correct.
+
+Re-decompile REL 194136 / 55123 and all callees with the corrected actor/horse
+types before making further claims about a horse road cache or tuning the
+foot search radius around that assumption.
