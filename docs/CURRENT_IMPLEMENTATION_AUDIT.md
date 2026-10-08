@@ -1247,3 +1247,78 @@ runtime-target port. Preserve only:
 
 Do not carry AutoController path-history/flick/snap acceptance gates into the
 mode-1 controller simply because they were already coded.
+
+
+---
+
+# Review of ff400cf / 1d4823a — final mode-1 RE gates
+
+The OnPress slot-1 ABI is now resolved and the vf13 call-site ABI is confirmed.
+
+Before rewriting RoadFollowPort as mode 1, three details remain:
+
+## 1. Correct flag meaning
+
+S_OnPressController +0x2C bit1 is NOT the persistent latch.
+
+Slot 1 rewrites bit1 from the current `hit` argument every tick.
+
+Use:
+
+- bit0 = active/requested controller state;
+- bit1 = current sample hit/road-present state;
+- bit4 = interruption armed;
+- top-level `S_HorseRoadFollow::m_latched` = persistent follow latch.
+
+Any code or docs that call controller bit1 "latched" should be corrected.
+
+## 2. Recover phase 4
+
+Top-level tick calls `controller->Tick(sample, 4, dt)` when a successful
+follow starts from `m_latched == false`.
+
+The current OnPress phase map documents 0,1,2,3,5 but not 4.
+
+Do not rewrite the controller until phase 4 is decompiled and mapped.
+
+## 3. Trace native hold-E activation -> bit0
+
+Slot 1 returns the controller's active/allowed predicate BEFORE top-level phase
+4 runs.
+
+Therefore the player's native hold-E action must set/arm bit0 through another
+path before `S_HorseRoadFollow::Tick` can accept the road.
+
+Trace the actual mounted action/listener path for:
+
+`horse_magnetism_activate / horse_magnetism_deactivate`
+
+through the rider input/state-machine/controller registration into
+`S_OnPressController::m_flags bit0`.
+
+Do not substitute the mod's custom foot action by directly setting bit0 until
+the native transition semantics are known.
+
+## 4. Recheck HintsActive exact predicate
+
+Slot 1 tail-jumps to 0x180A4E99C.
+
+Current notes conflict:
+
+- one description reduces the return to bit0;
+- another reconstructs HintsActive as including deactivate-time and armed-state
+  conditions.
+
+Re-decompile 0x180A4E99C and settle the exact boolean expression.
+
+After these items are complete, Track B can be rewritten cleanly as:
+
+```text
+common S_HorseRoadFollow tick/helpers
++
+pure S_OnPressController slot1/phase0-5/GetRoadDistance
++
+explicit Henry substitutions for rider input/jump/chat/action request
+```
+
+with all S_AutoController-only history/snap/flick acceptance machinery deleted.
