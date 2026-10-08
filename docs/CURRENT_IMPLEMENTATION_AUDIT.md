@@ -976,3 +976,205 @@ The runtime still uses sampler-only yawFrom + custom steering.
 Do not wait for the camera work to continue the **static-to-C++ port** of the
 native road-controller state machine, but keep that port isolated from the
 camera/body implementation until both sides can be joined cleanly.
+
+
+---
+
+# Review of 62fad17 — RoadFollowPort is NOT yet a faithful port
+
+The separation into an unwired Track-B module is good. The commit title and
+source comments, however, overstate its fidelity.
+
+Do not wire `RoadFollowPort` into runtime in its current form.
+
+## 1. It mixes two different native controller modes
+
+Native `S_HorseRoadFollow` selects one concrete `I_MagnetismController`:
+
+- mode 1: `S_OnPressController`
+- mode 2: `S_AutoController`
+
+The new port combines:
+
+- `S_AutoController::SetHoldLatchedImpl` acceptance gates, AND
+- `S_OnPressController` flags/timers/phases.
+
+That hybrid does not exist in vanilla.
+
+Before implementation, determine which native mode corresponds to the
+user-facing horseback hold-E behavior and port THAT controller coherently.
+If AutoWalk intentionally wants different engagement semantics, document that
+as a deliberate adaptation rather than calling it native-equivalent.
+
+## 2. Any manual WASD currently rejects the latch immediately
+
+`AcceptanceGates(... manualInput ...)` currently does:
+
+```cpp
+if (manualInput) return false;
+```
+
+This directly contradicts the requested/native behavior:
+
+- manual input should take movement authority immediately;
+- follow state should survive during the interruption grace window;
+- neutral input before deactivation should allow follow to resume.
+
+The recovered OnPress code uses rider yaw magnitude + movement threshold +
+RemainAngle + DeactivateTime/ReactivateTime. It does NOT mean
+"any WASD = acceptance failure."
+
+## 3. Phase 0 is implemented incorrectly
+
+Recovered native phase 0 only clears the armed interruption state when the
+rider input has returned within its neutral/tolerance condition.
+
+Current code clears armed state unconditionally whenever bit 0x10 is set:
+
+```cpp
+if (armed) {
+    clear armed;
+    zero deactivate/reactivate timers;
+}
+```
+
+Therefore an armed manual interruption cannot persist correctly across frames.
+
+## 4. Phase 3 is run unconditionally and can clear flags while not armed
+
+Current `Tick()` calls phase 3 at the end of every tick.
+
+Current phase 3 says:
+
+```cpp
+if deactivate > 0 -> countdown
+else if reactivate > 0 -> countdown
+else clear active + latched flags
+```
+
+So with no active timers it clears the controller flags even during a nominal
+successful follow tick.
+
+Meanwhile `State::latched` is a separate bool and is not cleared there.
+
+This creates an impossible split state:
+
+```text
+State.latched == true
+flags.latched == false
+flags.active == false
+```
+
+That is not a faithful representation of either native controller.
+
+## 5. Phase 2 is not actually ported
+
+The recovered phase 2:
+
+- resets/deals with deactivate timing;
+- reads rider yaw/move;
+- compares yaw against RemainAngle and move against 0.2;
+- arms bit4 only when thresholds are exceeded;
+- copies native DeactivateTime/ReactivateTime.
+
+Current `ControllerTick(... phase=2)` is a no-op. The caller later replaces
+the whole decision with a boolean `manualInput`.
+
+This throws away the native magnitude/angle behavior.
+
+## 6. S_AutoController history is not faithfully reproduced
+
+Recovered history behavior:
+
+- records `m_flag44` (the controller's hit flag), not generic active-bit;
+- appends only when the time gap exceeds ~0.2 s;
+- prunes against SnapTime;
+- participates in flick/snap acceptance logic.
+
+Current port:
+
+- appends every successful tick;
+- records `flags & active`;
+- uses fixed arrays;
+- does not implement the recovered flick/snap decision;
+- can fill its fixed buffer and cease recording.
+
+This is structural scaffolding, not equivalent behavior.
+
+## 7. pathB is defined but never used
+
+`PushPathB()` exists but `Tick()` never calls it.
+
+Even if called, the fixed array currently stops accepting new entries when full;
+native behavior preserves the LAST 10 entries by discarding older history.
+
+The probe also does not currently expose road-point IDs needed for an exact
+port, although the native S_HorseRoadPoint pointers are available inside the
+sampler and can be copied into the probe.
+
+## 8. Native road/cart/snap gates are explicitly omitted
+
+The port comments admit these are not implemented:
+
+- RoadSnap_TestVector / cart-box proximity gate;
+- road-state-dependent flick score;
+- Road_SnapChooser state gate.
+
+Those may need a deliberate Henry adaptation, but omission must be justified
+gate-by-gate. "Facade has no road class" is not equivalent to native behavior.
+
+## 9. Enter gate is reduced incorrectly
+
+Recovered Auto enter gate uses:
+
+```text
+min(
+  abs(wrap(yawFrom - previousMagnetYaw)),
+  abs(wrap(yawTo   - previousMagnetYaw))
+) <= EnterAngle
+```
+
+Current port checks only `yawFrom`.
+
+This removes one of the native direction-continuity choices and can reject the
+correct segment direction.
+
+## 10. UpdateTurnParams / fast-stop is absent
+
+The native successful path calls, in order:
+
+- controller phase 2;
+- HorseRoadFollow_UpdateTurnParams;
+- HorseRoadFollow_PushPathB;
+- HorseRoadFollow_PublishMagnetism;
+- controller phase 1.
+
+The current module publishes magnetYaw but does not reproduce
+UpdateTurnParams/fastStop or the actual pathB update.
+
+# Track-B completion gate
+
+Before runtime wiring, produce a mode-specific, branch-by-branch table:
+
+```text
+native function/phase       port function/branch       adaptation?       exact?
+```
+
+Every omitted horse-only dependency must have one of:
+
+1. exact native equivalent using Henry state;
+2. explicit constant/fallback justified by decompiled semantics;
+3. a documented reason it is irrelevant to on-foot road selection.
+
+Then add deterministic unit-style state-machine tests for at least:
+
+- engage on valid road;
+- E released after successful latch;
+- brief A/D interruption -> neutral -> resume;
+- sustained A/D -> deactivate after native timers;
+- sample miss/failure;
+- curve direction continuity via yawFrom/yawTo;
+- history prune cadence;
+- pathB rolling last-10 behavior.
+
+Until these pass, `RoadFollowPort` remains an unwired research scaffold.
