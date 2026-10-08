@@ -584,6 +584,29 @@ hold +0x174 (scoped free-look) + flat-view capture + target-relative limits
   logged 1 in the earlier session; the on-disk .data default is 0 (the real
   default loads from the profile registration).
 
+### OnPress slot-1 ABI -- RESOLVED (corrects the stale header)
+S_OnPressController vtable slot 1 (0x180A4E98C), disassembly-verified against
+the S_HorseRoadFollow::Tick call site (ctrl, latched, hit, &sample):
+```
+and  byte [rcx+0x2c], 0xfd      ; flags &= ~2
+add  r8b, r8b                   ; r8b = hit*2  (R8 = the hit arg)
+or   byte [rcx+0x2c], r8b       ; bit1 = hit
+jmp  HintsActive                ; relocated tail-jump (rel32 zeroed on disk)
+```
+- The function reads ONLY the hit (r8); the latched (rdx) and the sample
+  (r9) arguments are UNUSED -- the tick's 4-arg call is the interface, the
+  implementation consumes one of them.
+- The return (AL) = the tail-called HintsActive predicate `(flags & 1) != 0`
+  -- the ACTIVE bit, not void.
+- Semantics: bit1 mirrors the current sample hit; the return tells the tick
+  whether the controller is actively following. The old public header
+  "void SetHoldLatched(bool latched)" is WRONG for this slot.
+- The tick's flow around it: slot3 GetRoadDistance -> wrapper sample ->
+  slot2 Tick(phase 0) -> slot1 (bit1=hit, returns active) ->
+  if !hit || !active: release (latched=0, phase 3); else if !latched:
+  Tick(4) (enter -> bit0), latched=1, Tick(2), UpdateTurnParams,
+  PushPathB, Publish; finally Tick(1).
+
 ### OnPress phases for the mode-1 port (branch-by-branch mapping)
 Recovered S_OnPressController_Tick (0x180A4E768), fields +0x20 deactivate,
 +0x24 reactivate, +0x28 hintTime, +0x2C flags (bit0 active, bit1 latched,
