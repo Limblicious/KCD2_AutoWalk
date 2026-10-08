@@ -1430,3 +1430,107 @@ At minimum:
 
 Only after these pass should RoadFollowPort replace the sampler-only runtime
 path.
+
+
+---
+
+# Review of 2256808 — radius/miss-grace patch masks an unverified facade
+
+The 2x road radius and 30-frame miss grace may improve symptoms, but the stated
+reason ("the horse has a persistent road cache that the standalone facade
+lacks") is not established by the current RE.
+
+More importantly, the standalone facade is still based on stale field
+identifications.
+
+## Critical layout correction
+
+Current `FootRoad.cpp` creates:
+
+```cpp
+alignas(8) unsigned char roadCache[0xCC0]{};
+*reinterpret_cast<void**>(horse + 0x668) = roadCache;
+```
+
+and existing RE text describes `C_Horse+0x668` / `+0x7A0` as horse road
+state/cache inputs.
+
+Current upstream libKCD2 has since corrected the inherited C_Actor layout:
+
+```text
+C_Actor +0x668 = C_Soul* m_pSoul
+C_Actor +0x7A0 = C_BoneSlotSystem m_boneSlotSystem
+```
+
+C_Horse derives from C_Animal/C_Actor at offset 0, so those offsets are inherited
+by C_Horse.
+
+Therefore the present standalone facade is placing an arbitrary zeroed byte
+buffer where a C_Soul* belongs. The old "road cache" label is stale.
+
+The old claim that +0x7A0 is road-state is likewise incompatible with the
+current typed C_Actor layout.
+
+## Consequence
+
+Before compensating with wider search radii, re-decompile the road sample
+wrapper/state-builder/sampler using the corrected C_Horse/C_Actor types.
+
+Required questions:
+
+1. What exact object is dereferenced from horse+0x668 in the sampler chain?
+2. Is +0x668 really reached from the C_Horse base, or was an earlier pointer
+   base misidentified?
+3. What function receives that pointer, and what type does its vtable imply?
+4. Does the sampler truly read C_Horse+0x7A0, and if so why is it touching the
+   actor bone-slot system? If not, what is the correct base object/offset?
+5. Which fields from a live horse are actually required by the sampler?
+6. Can those required dependencies be supplied from Henry's real C_Player /
+   C_Actor state instead of zero-filled fake storage?
+
+Do not call the fake +0x668 buffer a road cache unless the corrected decompile
+proves that independently of the stale seed names.
+
+## Status of the 2x radius
+
+`kRoadRadiusScale = 2.0f` is an intentional gameplay adaptation, not recovered
+native behavior.
+
+It may be desirable for an on-foot UX even after the facade is corrected, but
+it should be evaluated only AFTER native sampling is structurally correct.
+
+Increasing it further can cause:
+
+- neighboring road acquisition;
+- wrong branch acquisition at intersections/forks;
+- snapping to a parallel nearby path.
+
+Do not tune this value upward as the primary fix for sampling instability.
+
+## Status of the miss grace
+
+The current:
+
+```cpp
+constexpr int kMissGraceFrames = 30; // "~0.5s at 60 Hz"
+```
+
+is frame-rate dependent:
+
+- 120 Hz -> 0.25 s
+- 60 Hz -> 0.5 s
+- 30 Hz -> 1.0 s
+
+If grace remains as a deliberate foot adaptation, implement it as accumulated
+seconds using `dt`, not a frame count.
+
+The synthetic grace sample also drops fromId/toId, so common PathB history does
+not advance during the gap. That is acceptable only as a documented fallback,
+not evidence of native cache equivalence.
+
+## Next gate
+
+Freeze radius/grace tuning.
+
+Revalidate the sampler facade in Ghidra with corrected C_Actor/C_Horse types
+before deciding whether any compensation is actually necessary.
