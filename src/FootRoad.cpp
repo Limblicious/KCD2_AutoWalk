@@ -126,29 +126,41 @@ struct PersistentStandaloneFacade {
     std::aligned_storage_t<sizeof(wh::entitymodule::S_HorseRoadFollow),
                            alignof(wh::entitymodule::S_HorseRoadFollow)> roadFollow{};
     alignas(8) unsigned char horse[0xA60]{};
-    alignas(8) unsigned char roadCache[0xCC0]{}; // empty road-cache object
     bool initialized = false;
 
-    void EnsureInitialized(Offsets::IEntity* playerEntity)
+    bool EnsureInitialized(Offsets::IEntity* playerEntity)
     {
+        initialized = false;
+        if (!playerEntity) {
+            return false;
+        }
+
+        auto* framework = CCryAction::GetInstance();
+        auto* player = framework
+            ? static_cast<wh::entitymodule::C_Player*>(framework->GetClientActor())
+            : nullptr;
+
+        // +0x668 is C_Actor::m_pSoul. Never substitute an invented byte
+        // buffer for this typed pointer: if the player soul is temporarily
+        // unavailable (load/teardown), fail closed and skip the sampler.
+        if (!player || !player->m_pSoul) {
+            return false;
+        }
+
         auto* hd = reinterpret_cast<wh::entitymodule::S_HorseData*>(&horseData);
         auto* rf = reinterpret_cast<wh::entitymodule::S_HorseRoadFollow*>(&roadFollow);
 
         *reinterpret_cast<Offsets::IEntity**>(horse + 0x38) = playerEntity;
-        // C_Horse+0x668 = C_Actor::m_pSoul (the current typed hierarchy):
-        // the road-record manager keys its records by the actor's soul
-        // (the sampler's lookup at 0x1807FE804 reads a sorted 0x38-record
-        // store through it). Point the facade at Henry's REAL soul so the
-        // lookup runs with the player's identity; the owned zeroed buffer
-        // remains only as the null fallback.
-        void* soul = nullptr;
-        if (auto* framework = CCryAction::GetInstance()) {
-            if (auto* actor = framework->GetClientActor()) {
-                soul = *reinterpret_cast<void**>(
-                    reinterpret_cast<std::uintptr_t>(actor) + 0x668);
-            }
-        }
-        *reinterpret_cast<void**>(horse + 0x668) = soul ? soul : roadCache;
+        *reinterpret_cast<void**>(horse + 0x668) = player->m_pSoul;
+
+        // The sampler chain also reaches the inherited C_Actor bone-slot
+        // block at +0x7A0. Copy Henry's real, constructor-initialized block
+        // instead of leaving zero-filled indices (native defaults are -1).
+        std::memcpy(
+            horse + 0x7A0,
+            &player->m_boneSlotSystem,
+            sizeof(player->m_boneSlotSystem));
+
         // C_Horse::m_pHorseData back-pointer (native helpers reach through it).
         *reinterpret_cast<wh::entitymodule::S_HorseData**>(horse + 0x9E8) = hd;
         rf->m_pHorseData = hd;
@@ -157,6 +169,7 @@ struct PersistentStandaloneFacade {
         hd->m_pHorse = reinterpret_cast<wh::entitymodule::C_Horse*>(horse);
         hd->m_pseudoSpeed = 3.0f;
         initialized = true;
+        return true;
     }
 };
 
@@ -393,7 +406,10 @@ FootRoadProbe ProbeRoadSampleStandalone(float searchDistance)
     }
 
     auto& facade = GetPersistentFacade();
-    facade.EnsureInitialized(playerEntity);
+    if (!facade.EnsureInitialized(playerEntity)) {
+        Log::Write("[AutoWalk] footRoadStandalone: facade dependencies unavailable.");
+        return result;
+    }
     result.facadeBuilt = true;
 
     auto* facadeRoadFollow =
@@ -425,7 +441,9 @@ bool SampleRoadStandalone(float searchDistance, FootRoadProbe& out)
     }
 
     auto& facade = GetPersistentFacade();
-    facade.EnsureInitialized(playerEntity);
+    if (!facade.EnsureInitialized(playerEntity)) {
+        return false;
+    }
     out.facadeBuilt = true;
 
     auto* facadeRoadFollow =
@@ -463,8 +481,7 @@ bool RefreshStandaloneFacade()
     if (!playerEntity) {
         return false;
     }
-    GetPersistentFacade().EnsureInitialized(playerEntity);
-    return true;
+    return GetPersistentFacade().EnsureInitialized(playerEntity);
 }
 
 std::string Describe(const FootRoadProbe& probe)
