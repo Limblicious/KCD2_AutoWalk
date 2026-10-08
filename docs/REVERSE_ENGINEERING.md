@@ -535,6 +535,25 @@ sub_1827D7E80, target entity part/slot 9 = the horse). The mechanism:
 hold +0x174 (scoped free-look) + flat-view capture + target-relative limits
 + the view stays mouse-driven while the horse body turns through its own SM.
 
+### C_FocusCamera::ShouldBeActive (0x1808B9B78 -> core 0x180B26A00)
+- Resolves the setup's target provider to the entity (via the entity
+  manager) and runs the activation gates:
+  1. Player-check chain (FUN_180B26BF0/FUN_18285D888) then compares the
+     target's +0x668 road-cache object against the player's -- EQUAL =>
+     inactive: **the setup rejects the player's own horse as the target**.
+  2. `*(target+0x250)+0x18` flag => inactive.
+  3. Game-state gates: whGlobal+0xF8 chain (FUN_180B26BA4), a dialogue
+     check, the player action state (slot 0x5e), camera checks
+     (FUN_1809E54A4 slot 0x60), and the actor-model flag (slot 0x1b,
+     0x18040B580-adjacent) -- all must be clear.
+- Foot-port viability: a provider with GetEntityId() == 0 skips the
+  target/entity checks entirely (the header: "GetEntityId may return 0") and
+  falls through to the game-state gates -- so a custom zero-id provider (or a
+  provider bound to a non-player frame) can activate the native FocusCamera
+  machinery on foot, subject to those remaining state gates. The target
+  frame/limit-pair/align-speed/stiffness live in the tracker (+0x38) filled
+  by the setup's provider chain -- the exact fill to recover next.
+
 ### controller+0x11C (the body quat) -- partial
 vf13 writes controller+0x11C from a quat built by FUN_180949f28 (the
 turn-smoothed body quat) and copies it to S_MountAnimState::m_rootRotation
