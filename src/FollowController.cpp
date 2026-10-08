@@ -123,6 +123,18 @@ float g_targetYaw = 0.0f;
 bool g_targetValid = false;
 bool g_nativeEnsured = false;
 
+// Central travel-state cleanup: every disengagement path (explicit Disable,
+// Reset, mounted/unavailable, the machine's release, manual relinquish) must
+// clear ALL of these, otherwise MovementRequestHook keeps forcing the old
+// travel yaw after the follow has ended.
+void ResetTravelFrame()
+{
+    g_followActive.store(false);
+    g_travelValid = false;
+    g_targetValid = false;
+    g_smoother = {};
+}
+
 // User-input signals gathered by the input listener each frame.
 std::atomic<bool> g_engageRequested{false};
 std::atomic<bool> g_disengageRequested{false};
@@ -397,8 +409,8 @@ void Disable()
 {
     ReleaseForward();
     RoadFollowPort::SetActionActive(false);
+    ResetTravelFrame();
     g_phase.store(Phase::Disabled);
-    g_targetValid = false;
     UpdatePromptFlags(false, false, false);
     Log::Write("[AutoWalk] FollowController: disabled.");
 }
@@ -406,6 +418,8 @@ void Disable()
 void Reset()
 {
     ReleaseForward();
+    RoadFollowPort::SetActionActive(false);
+    ResetTravelFrame();
     g_phase.store(Phase::Disabled);
 }
 
@@ -417,9 +431,10 @@ void Tick()
         : nullptr;
 
     if (!player || IsMounted()) {
+        ReleaseForward();
+        RoadFollowPort::SetActionActive(false);
+        ResetTravelFrame();
         if (g_phase.load() != Phase::Disabled) {
-            ReleaseForward();
-            RoadFollowPort::SetActionActive(false);
             g_phase.store(Phase::Disabled);
             Log::Write("[AutoWalk] FollowController: stopped (player unavailable or mounted).");
         }
@@ -479,12 +494,13 @@ void Tick()
     const bool onRoad = sample.hasHit;
 
     if (!latched) {
-        // Idle/released: keep the prompt state up.
+        // Idle/released: clear the travel state unconditionally -- the
+        // hook must stop forcing the old travel yaw. The phase conditional
+        // only guards the logging.
+        ReleaseForward();
+        ResetTravelFrame();
         if (g_phase.load() != Phase::Disabled) {
-            ReleaseForward();
             g_phase.store(Phase::Disabled);
-            g_travelValid = false;
-            g_followActive.store(false);
             Log::Write("[AutoWalk] FollowController: native follow released.");
         }
         UpdatePromptFlags(onRoad, false, false);
@@ -500,11 +516,10 @@ void Tick()
     // chases that command (rate-limited, sign-flip reset) and the smoothed
     // command turns the frame each frame -- exactly the recovered
     // HorseYaw_SmoothCD -> PushRiderAction actuator shape. The movement
-    // hook then replaces the vanilla camera-relative velocity direction
-    // with the travel frame (keeping the speed magnitude) AND writes the
-    // travel-frame yaw quat into the request's m_rootRotation (the
-    // body-facing seam), so the body travels the road while the camera is
-    // never touched.
+    // hook replaces the vanilla camera-relative velocity direction with
+    // the travel frame (keeping the speed magnitude). The camera is never
+    // written; the m_rootRotation body-facing seam stays pending the
+    // Track A recovery of its consumer.
     if (following && !manualHeld) {
         // Sample-acceptance gate recovered from SetHoldLatchedImpl (gate 5):
         // a sample is only accepted within RoadMagnetismEnterAngle of the
@@ -523,10 +538,10 @@ void Tick()
 
         EnsureMovementHook();
 
-        // Initialize the travel frame at Henry's current body yaw. Also
-        // clear the sample-acceptance gate: after a release the stale
-        // target otherwise rejects the new road and the follow walks the
-        // old direction (the re-engagement stacking bug).
+        // Initialize the travel frame at Henry's current body yaw. The
+        // acceptance gate was already invalidated by the release path's
+        // ResetTravelFrame, so this engagement's first sample is accepted
+        // unconditionally (the re-engagement stacking fix).
         if (!g_travelValid) {
             float bodyYaw = 0.0f;
             auto* framework2 = CCryAction::GetInstance();
@@ -539,8 +554,7 @@ void Tick()
             }
             g_travelYaw = bodyYaw;
             g_travelValid = true;
-            g_smoother = {};   // the command smoother starts neutral
-            g_targetValid = false; // accept the next sample unconditionally
+            g_smoother = {}; // the command smoother starts neutral
         }
 
         const float cmd = WrapPi(g_targetYaw - g_travelYaw);
