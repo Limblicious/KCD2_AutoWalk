@@ -469,6 +469,7 @@ void Tick()
     if (engage && !latched && onRoad) {
         FootRoad::NativeSetHoldLatched(true);
         g_state = {};
+        g_state.flags |= 0x01; // active: the OnPress enter state
         Log::Write("[AutoWalk] FollowController: latched via hold E.");
     }
     if (disengage) {
@@ -479,24 +480,30 @@ void Tick()
 
     // Manual WASD: the recovered OnPress interruption semantics (phase 2
     // arms on manual input, phases 3 count the DeactivateTime/ReactivateTime
-    // grace window, neutral input clears the armed state).
+    // grace window, neutral input clears the armed state) -- evaluated only
+    // while latched.
     const bool manualHeld = IsManualHeld();
+
+    if (!latched) {
+        // Idle: keep the prompt state up; the state machine is inert.
+        if (g_phase.load() != Phase::Disabled) {
+            ReleaseForward();
+            g_phase.store(Phase::Disabled);
+            g_travelValid = false;
+            g_followActive.store(false);
+            Log::Write("[AutoWalk] FollowController: native follow released.");
+        }
+        UpdatePromptFlags(onRoad, false, false);
+        return;
+    }
+
     const bool chat = IsChatFollowActive();
     const bool followActive = NativeMagnetism::TickStateMachine(
         g_state, dt, *cvars, manualHeld, chat, false, false);
     if (!followActive) {
+        // The recovered interruption timers exhausted -> deactivate.
         FootRoad::NativeSetHoldLatched(false);
         Disable();
-        return;
-    }
-
-    if (!latched) {
-        if (g_phase.load() != Phase::Disabled) {
-            ReleaseForward();
-            g_phase.store(Phase::Disabled);
-            Log::Write("[AutoWalk] FollowController: native follow released.");
-        }
-        UpdatePromptFlags(onRoad, false, false);
         return;
     }
 
