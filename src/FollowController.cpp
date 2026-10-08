@@ -214,6 +214,32 @@ bool IsMounted()
     return input && input->m_pHorse;
 }
 
+// The game's pause/loading gate: while the game is paused (ESC menu, pause
+// reasons) or loading, the follow must not hold W -- the synthetic hold
+// otherwise scrolls the menus and gates other input (the F5 quicksave).
+bool IsGamePausedOrLoading()
+{
+    auto* framework = CCryAction::GetInstance();
+    if (!framework) {
+        return false;
+    }
+    const auto vtable = *reinterpret_cast<std::uintptr_t*>(framework);
+    // IGameFramework slot [14]: bool(idx) -- cmp dword[this+idx*4+8],0; setnle
+    // (the pause-reason counters). Slot [17]: IsLoadingSaveGame (VERIFIED).
+    using PauseFn = bool (*)(void*, std::uint16_t);
+    const auto pauseFn = *reinterpret_cast<PauseFn*>(vtable + 14 * 8);
+    if (pauseFn) {
+        for (std::uint16_t i = 0; i < 3; ++i) {
+            if (pauseFn(framework, i)) {
+                return true;
+            }
+        }
+    }
+    using LoadingFn = bool (*)(void*);
+    const auto loadingFn = *reinterpret_cast<LoadingFn*>(vtable + 17 * 8);
+    return loadingFn && loadingFn(framework);
+}
+
 void ReleaseForward()
 {
     if (g_wHeld && InputSeam::IsKeyHeld(Offsets::eKI_W)) {
@@ -455,6 +481,16 @@ void Tick()
     // Native tuning values.
     const NativeMagnetism::FrameCVars* cvars = nullptr;
     if (!NativeMagnetism::RefreshFrameCVars(cvars) || !cvars) {
+        return;
+    }
+
+    // Paused or loading: release the hold and suspend the follow (no
+    // machine advance, no prompt) -- the synthetic W must never reach the
+    // menus.
+    if (IsGamePausedOrLoading()) {
+        ReleaseForward();
+        ResetTravelFrame();
+        UpdatePromptFlags(false, false, false);
         return;
     }
 
