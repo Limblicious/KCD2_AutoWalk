@@ -569,8 +569,7 @@ void Tick()
         HoldForward();
         g_phase.store(Phase::Following);
     } else {
-        g_followActive.store(false);
-        g_travelValid = false;
+        ResetTravelFrame();
         ReleaseForward();
         g_phase.store(Phase::AwaitingRoad);
     }
