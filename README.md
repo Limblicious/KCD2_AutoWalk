@@ -44,7 +44,7 @@ KingdomComeDeliverance2/
 
 ### Steam Workshop note
 
-Subscribing on the Steam Workshop delivers the mod's data and localization packs, but KCSE currently discovers native plugins **only in the game's `Mods` folder** — it does not read Steam Workshop content directly. After subscribing, make sure the mod also ends up in `Mods\kcd_autowalk` (copy the downloaded Workshop folder there, or simply install the ZIP manually). If the game version or KCSE ever gains native Workshop plugin loading, this step becomes unnecessary.
+Subscribing on the Steam Workshop delivers the mod's data and localization packs, but KCSE does not discover native plugins inside Steam Workshop content. Copy `KCSE\Plugins\KCD2_AutoWalk.dll` from the downloaded Workshop item into the game's global `KCSE\Plugins` folder. This loads only the native plugin manually and avoids installing a duplicate copy of the Workshop data PAKs. If KCSE gains native Workshop plugin discovery, this step becomes unnecessary.
 
 ### Unlimited Saving II compatibility
 

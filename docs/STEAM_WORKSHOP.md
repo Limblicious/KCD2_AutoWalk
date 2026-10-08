@@ -1,5 +1,7 @@
 # Steam Workshop — Release 0.1.0
 
+Copy/paste-ready Steam BBCode: `docs/STEAM_WORKSHOP_DESCRIPTION.txt`
+
 ## Uploader
 
 `H:\SteamLibrary\steamapps\common\KCD2Mod\Tools\SteamWorkshopUploader\SteamWorkshopUploader.exe`
@@ -49,12 +51,11 @@ REQUIREMENTS
 - KCSE Address Library for 1.5.6
 
 INSTALLATION
-KCSE loads native plugins from the game's Mods folder. Install KCSE
+KCSE does not read native plugins from Steam Workshop content. Install KCSE
 (dinput8.dll into Bin/Win64MasterMasterSteamPGO) and the Address Library
-(KCSE/addresslib), then make sure this mod's folder is present in
-KingdomComeDeliverance2/Mods/kcd_autowalk. After subscribing, copy the
-downloaded Workshop folder there — KCSE does not read Workshop content
-directly yet.
+(KCSE/addresslib), then copy KCSE/Plugins/KCD2_AutoWalk.dll from the downloaded
+Workshop item into KingdomComeDeliverance2/KCSE/Plugins. Do not duplicate the
+data PAKs under Mods.
 
 KNOWN LIMITATIONS
 - The camera stays tied to Henry's travel heading while following
@@ -72,14 +73,14 @@ KCSE `PluginManager::Init()` scans only:
 1. `<game root>\mods\*\KCSE\Plugins\`
 2. `<game root>\KCSE\Plugins\`
 
-Steam Workshop subscriptions are mounted by the game's own mod system from the Steam content folder, which KCSE does not read. Therefore a Workshop-only install will deliver the data/localization paks but **not** load the native plugin until the mod folder is also present under `Mods\`. The hidden-upload test below confirms this empirically via `KCSE\logs\KCSE.log`.
+Steam Workshop subscriptions are mounted by the game's own mod system from the Steam content folder, which KCSE does not read. Therefore a Workshop-only install delivers the data/localization paks but **does not load the native plugin**. Copy only `KCD2_AutoWalk.dll` from the Workshop item into `<game root>\KCSE\Plugins`; this is KCSE's supported global plugin directory and avoids loading duplicate mod data.
 
 ## Workshop-only install test (hidden upload)
 
 1. Back up the working manual install: move `Mods\kcd_autowalk` to `Mods_backup\kcd_autowalk` (do not delete).
 2. Subscribe to the hidden item; let Steam download it.
 3. Launch the game; read `KCSE\logs\KCSE.log` — "Searching mods directory" shows whether the plugin was discovered.
-4. If not discovered (expected): copy the downloaded Workshop folder into `Mods\kcd_autowalk` and relaunch.
+4. If not discovered (expected): copy the Workshop item's `KCSE\Plugins\KCD2_AutoWalk.dll` into the game's `KCSE\Plugins` directory and relaunch.
 5. In-game checklist:
    - hold-E prompt appears on a road
    - Henry follows the road
