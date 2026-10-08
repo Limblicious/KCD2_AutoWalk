@@ -64,16 +64,10 @@ void MovementRequestHook(void* self, float dt, float* out)
     const float yaw = g_travelYaw;
     out[3] = -std::sin(yaw) * speed;
     out[4] = std::cos(yaw) * speed;
-
-    // Body-facing seam: m_rootRotation (S_MountAnimState+0x3C) carries the
-    // controller's internal body quat to the character/root orientation.
-    // Overwrite it with the travel-frame yaw quat so the body faces the
-    // travel direction while the look state (the camera) is untouched.
-    const float half = yaw * 0.5f;
-    out[15] = 0.0f;                     // quat x
-    out[16] = 0.0f;                     // quat y
-    out[17] = std::sin(half);           // quat z
-    out[18] = std::cos(half);           // quat w
+    // NOTE: m_rootRotation (out+0x3C) is NOT overwritten here -- its exact
+    // role is still "MED"-unverified (quat vs look/aim data), and writing it
+    // was observed to couple the mouse look into the travel direction. The
+    // body-facing seam stays pending Track A recovery.
 }
 
 void EnsureMovementHook()
@@ -529,7 +523,10 @@ void Tick()
 
         EnsureMovementHook();
 
-        // Initialize the travel frame at Henry's current body yaw.
+        // Initialize the travel frame at Henry's current body yaw. Also
+        // clear the sample-acceptance gate: after a release the stale
+        // target otherwise rejects the new road and the follow walks the
+        // old direction (the re-engagement stacking bug).
         if (!g_travelValid) {
             float bodyYaw = 0.0f;
             auto* framework2 = CCryAction::GetInstance();
@@ -542,7 +539,8 @@ void Tick()
             }
             g_travelYaw = bodyYaw;
             g_travelValid = true;
-            g_smoother = {}; // the command smoother starts neutral
+            g_smoother = {};   // the command smoother starts neutral
+            g_targetValid = false; // accept the next sample unconditionally
         }
 
         const float cmd = WrapPi(g_targetYaw - g_travelYaw);
