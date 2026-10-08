@@ -27,6 +27,8 @@ CMakeUserPresets.json
 *.idb
 *.ipdb
 *.iobj
+__pycache__/
+*.pyc
 
 # Local workstation configuration
 .local/

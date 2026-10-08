@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<kcd_mod>
+  <info>
+    <name>KCD2 AutoWalk - Unlimited Saving II Compatibility</name>
+    <modid>kcd_autowalk_usii_compat</modid>
+    <description>Merges the input definitions required by AutoWalk and Unlimited Saving II.</description>
+    <author>Limblicious</author>
+    <version>0.1.0-dev</version>
+    <created_on>2026-10-07</created_on>
+  </info>
+  <supports>
+    <version>1.5.6*</version>
+  </supports>
+</kcd_mod>

@@ -46,6 +46,16 @@ KingdomComeDeliverance2/
 
 Subscribing on the Steam Workshop delivers the mod's data and localization packs, but KCSE currently discovers native plugins **only in the game's `Mods` folder** — it does not read Steam Workshop content directly. After subscribing, make sure the mod also ends up in `Mods\kcd_autowalk` (copy the downloaded Workshop folder there, or simply install the ZIP manually). If the game version or KCSE ever gains native Workshop plugin loading, this step becomes unnecessary.
 
+### Unlimited Saving II compatibility
+
+[Unlimited Saving II](https://steamcommunity.com/sharedfiles/filedetails/?id=3443741661) and AutoWalk both replace `Libs/Config/defaultProfile.xml`, so installing both without a compatibility patch causes whichever loads first to lose its input actions. Build the optional merged patch with:
+
+```powershell
+.\scripts\package-usii-compat.ps1 -Configuration Release -Version 0.1.0
+```
+
+Then copy `dist\kcd_autowalk_usii_compat` into the game's `Mods` folder alongside `kcd_autowalk`. Keep Unlimited Saving II subscribed. The compatibility mod is data-only and preserves the normal AutoWalk package unchanged.
+
 ## How to use
 
 1. Stand on or near a road.
@@ -59,7 +69,7 @@ Subscribing on the Steam Workshop delivers the mod's data and localization packs
 - While following, the camera stays tied to Henry's travel heading. The mounted-style decoupled look (free camera like on horseback) is not implemented yet.
 - Henry's warning text ("Henry is not on suitable road") is localized in English; other languages show the vanilla text.
 - The hold-E prompt requires shipping full replacements of two vanilla input config files. A future game update that changes those files may require a mod update.
-- Quick-save (F5) while following is untested and out of scope for this release.
+- Unlimited Saving II requires the optional compatibility package described above because both mods replace the same input profile.
 
 ## Compatibility
 

@@ -59,8 +59,12 @@ directly yet.
 KNOWN LIMITATIONS
 - The camera stays tied to Henry's travel heading while following
 - The "not on suitable road" warning is English-only for now
-- Quick-save while following is untested
+- Unlimited Saving II needs the optional AutoWalk compatibility package
 ```
+
+### Unlimited Saving II
+
+Both mods replace `Libs/Config/defaultProfile.xml`. Users of Workshop item `3443741661` must also install `kcd_autowalk_usii_compat` from the compatibility ZIP alongside the main AutoWalk mod. The patch is data-only and restores both mods' input actions without bundling Unlimited Saving II.
 
 ## KCSE loader finding (verified against source)
 
