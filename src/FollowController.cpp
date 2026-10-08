@@ -233,17 +233,23 @@ void HoldForward()
 }
 
 
-// Target the actual KCD2 root-menu lifecycle rather than treating arbitrary
-// framework pause-source counters as "menu open". C_UIMenu::Open/Close are the
-// authoritative state transition for the ESC/root pause menu.
+// Target the actual KCD2 UI lifecycle rather than treating arbitrary
+// framework pause-source counters as "menu open":
+//   - C_UIMenu::Open/Close = the ESC/root pause menu.
+//   - C_UIFullUIModeHelper::OnSourceEvent = the full-UI mode (inventory,
+//     perks, map, quest log, alchemy, etc.) -- the game's source monitor
+//     broadcasts the active/inactive transitions to it.
 std::atomic<bool> g_rootMenuOpen{false};
+std::atomic<bool> g_fullUIModeActive{false};
 bool g_menuHooksAttempted = false;
 bool g_menuHooksInstalled = false;
 
 using UIMenuOpenFn = void (*)(void* self, char mode);
 using UIMenuCloseFn = void (*)(void* self);
+using FullUIModeEventFn = void (*)(void* self, void* a2, bool bActive);
 UIMenuOpenFn g_originalUIMenuOpen = nullptr;
 UIMenuCloseFn g_originalUIMenuClose = nullptr;
+FullUIModeEventFn g_originalFullUIModeEvent = nullptr;
 
 void UIMenuOpenHook(void* self, char mode)
 {
@@ -266,6 +272,18 @@ void UIMenuCloseHook(void* self)
     // it on the next frame if the mode-1 road latch is still active.
     g_rootMenuOpen.store(false);
     g_lastTick = {};
+}
+
+void FullUIModeEventHook(void* self, void* a2, bool bActive)
+{
+    g_fullUIModeActive.store(bActive);
+    if (bActive) {
+        ReleaseForward();
+        g_lastTick = {};
+    }
+    if (g_originalFullUIModeEvent) {
+        g_originalFullUIModeEvent(self, a2, bActive);
+    }
 }
 
 void EnsureMenuHooks()
@@ -315,8 +333,25 @@ void EnsureMenuHooks()
         return;
     }
 
+    // The full-UI mode (inventory, perks, map, quest log, ...): the game's
+    // source monitor broadcasts the mode transitions to
+    // C_UIFullUIModeHelper::OnSourceEvent (slot [0], 0x181F52710).
+    void* fullUIModeTarget = reinterpret_cast<void*>(moduleBase + 0x1F52710);
+    const MH_STATUS fullUiCreate = MH_CreateHook(
+        fullUIModeTarget, reinterpret_cast<void*>(&FullUIModeEventHook),
+        reinterpret_cast<void**>(&g_originalFullUIModeEvent));
+    if (fullUiCreate != MH_OK) {
+        Log::Write(std::string("[AutoWalk] FollowController: full-UI mode hook create failed (status=") +
+                   std::to_string(static_cast<int>(fullUiCreate)) + ").");
+    } else {
+        const MH_STATUS fullUiEnable = MH_EnableHook(fullUIModeTarget);
+        if (fullUiEnable != MH_OK) {
+            Log::Write("[AutoWalk] FollowController: full-UI mode hook could not be enabled.");
+        }
+    }
+
     g_menuHooksInstalled = true;
-    Log::Write("[AutoWalk] FollowController: root-menu Open/Close hooks installed.");
+    Log::Write("[AutoWalk] FollowController: UI lifecycle hooks installed (root menu + full-UI mode).");
 }
 
 class InputListener final : public Offsets::IInputEventListener {
@@ -548,10 +583,11 @@ void Tick()
         return;
     }
 
-    // Root menu open: preserve the road-follow/controller state, but never
-    // keep our synthetic W held while UI owns the keyboard. No sampling,
-    // timers, prompt mutation, or travel-frame reset occurs here.
-    if (g_rootMenuOpen.load()) {
+    // UI open (root menu or the full-UI mode): preserve the road-follow
+    // state, but never keep our synthetic W held while the UI owns the
+    // keyboard. No sampling, timers, prompt mutation, or travel-frame reset
+    // occurs here.
+    if (g_rootMenuOpen.load() || g_fullUIModeActive.load()) {
         ReleaseForward();
         g_lastTick = now;
         return;
