@@ -302,7 +302,7 @@ vector region initialized with the same reserve helper.
   - mode 1 -> S_OnPressController_Factory(&slot, S_HorseData*, FUN_181302a54(moveAdapter));
   - mode 2 -> S_AutoController_Factory(&slot, S_HorseData*);
   - mode 0 -> none.
-- m_pMagnetism (+0x68) = *slot. For the on-foot adapter, force mode 2 (auto) — the foot player has no rider adapter for mode 1.
+- m_pMagnetism (+0x68) = *slot. The user's requested horseback-style hold-E UX maps to mode 1 (S_OnPressController); the foot port must reproduce/adapt mode 1 rather than force mode 2.
 
 ### Function: PathHistory_FlickScore (0x181ECA440)
 - `int PathHistory_FlickScore(AW_S_AutoController* c)` = RoadState_GetIndex(horse+0x7A0, HorseData_GetTag(horse)); caller rejects when result == 4 (off-road state).
@@ -325,8 +325,23 @@ m_pHorseData @0x18, m_deactivateTime @0x20, m_reactivateTime @0x24,
 m_hintTime @0x28, m_flags @0x2C (bit0 active, bit1 latched, bit3 flick,
 bit4 interrupted/armed).
 
-### Function: S_OnPressController_SetHoldLatched (0x180A4E98C)
-`m_flags = (m_flags & ~2) | (latched << 1)` — trivial bit update.
+### Function: S_OnPressController vtable slot 1 (0x180A4E98C) — SIGNATURE MUST BE RECHECKED
+Earlier notes labeled this as `SetHoldLatched(bool)` because the body visibly
+updates bit1 from the latched argument. That mapping conflicts with the now
+branch-complete `S_HorseRoadFollow::Tick` call site, which invokes controller
+slot 1 with `(latched, hit, &sample)` and consumes a boolean return value.
+
+The AutoController slot 1 was re-decompiled with the corrected 4-argument
+signature. Before implementing mode 1, re-decompile the OnPress slot 1 from the
+same top-level call-site ABI and recover:
+
+- exact signature;
+- which of `latched`, `hit`, and `sample` it reads;
+- exact boolean return semantics;
+- whether the visible bit1 update is the whole function or only part of it.
+
+Do not build the mode-1 port around the old one-argument header declaration
+until this contradiction is resolved.
 
 ### Function: S_OnPressController_Tick (0x180A4E768)
 - Phase 0: if armed (bit4): rider input via `m_pMove(+0x100)->vf[0x18]()`; yaw below const OR move below 0.2 -> clear bit4 (interruption clears the armed state). Chat-follow active -> clear active/latch bits + zero timers (deactivate).
@@ -373,8 +388,10 @@ Allocates 0x30 and calls S_OnPressController_Ctor(obj, S_HorseData*, moveAdapter
       [C_Horse+0x9E8]->vf[8]() rider-sync object -> vf[0x40](&{0, m_yawSmoothed},
       m_magnetismLive) — the exact downstream application boundary (horse yaw
       into the rider view/sync, gated by magnetism-live).
-- Foot adapter: reproduce this exact smoothing (same cvars) and apply the
-  output to Henry's view instead of the rider-sync object.
+- Foot adapter: reproduce this exact smoothing (same cvars), but do NOT route
+  the road command through Henry's view channel. The physical body/travel
+  consumer is being recovered separately; camera/view ownership is handled
+  through the native FocusCamera mechanism.
 
 ### Function: I_HorseRiderSync::PushRiderAction (0x18059BC40) — Gate A
 - Recovered signature: `void PushRiderAction(void* sync, const Quat* in, bool skip)`.
@@ -457,14 +474,11 @@ separate states, with a scoped hold that decouples them:
 - vf135 (0x18040B580): `owner+0x174 += (inc ? +1 : -1)`.
 - vf136 (0x18286139C): `owner+0x178 += (inc ? +1 : -1)`.
 
-### Foot-port consequence
-The mounted-style separation for Henry: while following, hold counter
-+0x174 (vf135) so the view stops dragging the flat yaw; drive the body via
-SetFlatYaw(state, yawQuat(travelYaw)) each update (the movement system faces
-the body along the flat yaw); release the counter on disengage. The camera
-(view) stays mouse-controlled the whole time. This replaces the velocity-only
-override: m_desiredVelocity changes WHERE Henry moves; the flat-yaw hold
-changes WHERE HIS BODY FACES.
+### Foot-port consequence — superseded by FocusCamera recovery
+Do not implement a manual `+0x174 + SetFlatYaw` scheme from this section.
+Subsequent RE identified `C_FocusCamera` as the native owner of the +0x174
+scope hold, captured flat-view reference, target-relative tracking and limits.
+The remaining body/root consumer still must be recovered separately.
 
 ### vf13 flat-yaw consumption (proof of the body-facing link, 2026-10-07)
 C_ActorMovementController::vf13 (0x1804B8E88) reads BOTH view and body state
@@ -696,3 +710,15 @@ The final AutoWalk controller must be explainable as either:
 2. a direct translation of fully recovered native branches/state where direct execution is unsafe.
 
 A custom tangent/cross-track/PID controller is not considered equivalent.
+
+
+### Critical interface-slot ABI consistency check
+`I_MagnetismController` public headers still describe slot 1 as
+`SetHoldLatched(bool)`, but the recovered `S_HorseRoadFollow::Tick` calls
+slot 1 with `(latched, hit, sample*)` and consumes a bool result. The
+AutoController implementation has already proven the header was wrong for that
+implementation.
+
+Therefore the OnPress slot-1 function at `0x180A4E98C` must be re-decompiled
+with the corrected call-site prototype before any mode-1 C++ port is considered
+branch-faithful.
