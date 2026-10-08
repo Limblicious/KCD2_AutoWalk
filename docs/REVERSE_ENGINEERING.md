@@ -433,6 +433,55 @@ Allocates 0x30 and calls S_OnPressController_Ctor(obj, S_HorseData*, moveAdapter
   (ViewLimitWide/Narrow/Bottom), clamp via ActorViewLimit_Clamp (0x18053B508,
   REL 30673).
 
+## View/body separation seam (recovered — the body-facing mechanism)
+
+The player's C_ActorPhysicsState keeps the VIEW and the BODY flat yaw as
+separate states, with a scoped hold that decouples them:
+
+### Function: SetViewRotation (0x1806440AC)
+- Sets the view: normalizes the input quat, writes m_lookQuat (+0x14) and
+  m_lookAngles (+0x08, QuatToAng), and m_viewPitch (+0x48).
+- **Gate**: only when BOTH hold counters (owner+0x174 and owner+0x178) are
+  < 1 does it rebuild m_flatYawQuat (+0x34) as a yaw-only quat of
+  m_lookAngles.z and refresh m_flatYaw (+0x44). While either counter is
+  positive, the flat yaw (the body's facing reference) stays under its own
+  owner and the view rotates freely -- the game's "free look" scoped hold.
+
+### Function: SetFlatYaw (0x1806442A8)
+- Writes m_flatYawQuat (+0x34) from the input quat; rebuilds m_lookQuat from
+  the flat yaw rotated by the current m_viewPitch (the view follows the body
+  while preserving the view pitch); rebuilds m_lookAngles from the flat quat
+  only when owner+0x174 < 1; refreshes m_flatYaw (+0x44).
+
+### Hold counters (ref-counted, scoped)
+- vf135 (0x18040B580): `owner+0x174 += (inc ? +1 : -1)`.
+- vf136 (0x18286139C): `owner+0x178 += (inc ? +1 : -1)`.
+
+### Foot-port consequence
+The mounted-style separation for Henry: while following, hold counter
++0x174 (vf135) so the view stops dragging the flat yaw; drive the body via
+SetFlatYaw(state, yawQuat(travelYaw)) each update (the movement system faces
+the body along the flat yaw); release the counter on disengage. The camera
+(view) stays mouse-controlled the whole time. This replaces the velocity-only
+override: m_desiredVelocity changes WHERE Henry moves; the flat-yaw hold
+changes WHERE HIS BODY FACES.
+
+### Downstream actuator chain status (Gate A — incomplete by design)
+PushRiderAction (0x18059BC40) is fully decompiled: gate `*(sync+0x18)&1`
+&& !skip; FUN_18059BBF8 converts {0,m_yawSmoothed} into the movement
+request's turn accumulator at request+0x88 (overwrite on first use — flag
+0x40 — then accumulate per update). The consumer call is
+`*(sync+0x28) -> vf[0x228] -> plVar1 -> vf[1](plVar1, request)`.
+sync+0x28 = the ctor arg a2 = FUN_1809115e0(rider+0x58) — an interfuscator
+dispatch; the on-disk vtables of the rider classes are rewritten at runtime
+(C_RiderPlayerInput's vtable area reads as string data at the expected slot),
+so the static chase stops there. Resolving the final horse hull/body-yaw
+mutation requires a RUNTIME pointer walk from a live C_RiderSync
+(debugger/KCSE-side), not more static vtable reads.
+Semantics established without the last hop: the smoothed value is a
+per-update turn AMOUNT accumulated by the consumer (not a heading); the
+rate limit lives in the CD step (omega = dt*RotationMax).
+
 ### Foot-adapter seam (derived)
 Henry's C_Player owns the same C_ActorPhysicsState (+0x238). The foot adapter
 adds its smoothed road-yaw delta to Henry's m_lookAngleAccum (+0x88) exactly
