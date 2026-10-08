@@ -584,9 +584,10 @@ void Tick()
             if (auto* entity = framework2 ? framework2->GetClientEntity() : nullptr) {
                 const auto* tm = reinterpret_cast<const float*>(
                     reinterpret_cast<std::uintptr_t>(entity) + 0x58);
-                // Forward column (tm[4..6]); CryEngine yaw convention:
-                // GetRotZ = atan2(-fwdX, fwdY).
-                bodyYaw = std::atan2(-tm[4], tm[5]);
+                // Matrix34 forward is column 1 = (m01,m11,m21) =
+                // (tm[1],tm[5],tm[9]). CryEngine GetRotZ convention:
+                // yaw = atan2(-fwdX, fwdY).
+                bodyYaw = std::atan2(-tm[1], tm[5]);
             }
             g_travelYaw = bodyYaw;
             g_travelValid = true;
