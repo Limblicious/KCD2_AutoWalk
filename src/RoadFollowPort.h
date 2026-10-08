@@ -8,9 +8,13 @@ struct FootRoadProbe;
 
 namespace AutoWalk::RoadFollowPort {
 
-// Faithful C++ port of the recovered S_HorseRoadFollow::Tick flow and the
-// S_OnPressController/S_AutoController acceptance gates, running around the
-// proven native road sampler. This module owns the ROAD-FOLLOWING state
+// UNWIRED PARTIAL PORT SCAFFOLD.
+// This is NOT yet a faithful/native-equivalent port and must not be wired into
+// FollowController until docs/CURRENT_IMPLEMENTATION_AUDIT.md Track-B gates
+// are resolved. It currently contains recovered pieces from
+// S_HorseRoadFollow/S_OnPress/S_Auto around the proven native sampler, but the
+// native controller modes and several gates/transitions are not yet preserved
+// exactly. This module owns the ROAD-FOLLOWING state
 // machine only; it does not touch the camera, the movement hook, or the
 // input seam (Track B, separate from the camera/body Track A).
 //
