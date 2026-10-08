@@ -601,3 +601,217 @@ Recover:
 - the exact final body/hull yaw actuator.
 
 Only after this is known should `g_travelYaw` integration be implemented.
+
+
+---
+
+# 2026-10-07 live-test result after a5bec72
+
+Observed on the game PC after the claimed "Gate A" completion:
+
+- Henry still runs backwards;
+- Henry still does not follow the road correctly;
+- camera/view is still coupled to direction of travel.
+
+This invalidates the claim that the actuator/camera architecture now matches vanilla.
+
+## Gate A is NOT actually complete
+
+The a5bec72 RE proves a transport/storage fact:
+
+```text
+PushRiderAction
+ -> request+0x88 accumulator
+ -> downstream request applier
+```
+
+It does **not** yet prove the final physical actuator semantics.
+
+The documentation jumps from:
+
+> the value is accumulated into request+0x88
+
+to:
+
+> therefore it is a per-update body-yaw delta with no further dt/scaling.
+
+That conclusion requires decompiling the downstream request applier and tracing
+the field until the horse hull/body yaw actually changes.
+
+Until that final consumer chain is recovered, the following remain OPEN:
+
+- exact units of request+0x88;
+- whether downstream dt/scaling/clamping occurs;
+- whether the value is normalized steering, angular request, turn fraction,
+  or direct angular delta;
+- sign convention at the body actuator;
+- interaction with manual rider turn.
+
+Gate A should be redefined as:
+
+```text
+m_yawSmoothed
+ -> PushRiderAction
+ -> request+0x88
+ -> request applier
+ -> movement/rotation subsystem
+ -> actual horse flat/body yaw
+```
+
+and is complete only after the last step is understood.
+
+## Confirmed orientation bug: wrong Matrix34 element
+
+Commit bd21e8d attempted to fix CryEngine yaw seeding with:
+
+```cpp
+bodyYaw = atan2(-tm[4], tm[5]);
+```
+
+That is still wrong.
+
+CryEngine Matrix34 is laid out as:
+
+```text
+tm[0]  = m00
+tm[1]  = m01
+tm[2]  = m02
+tm[3]  = m03
+tm[4]  = m10
+tm[5]  = m11
+tm[6]  = m12
+tm[7]  = m13
+tm[8]  = m20
+tm[9]  = m21
+...
+```
+
+and `Matrix34::GetColumn1()` -- the engine forward vector -- is:
+
+```text
+(m01, m11, m21)
+= (tm[1], tm[5], tm[9])
+```
+
+The engine yaw convention is:
+
+```cpp
+atan2(-forward.x, forward.y)
+```
+
+Therefore the authoritative planar body-yaw seed is:
+
+```cpp
+atan2(-tm[1], tm[5])
+```
+
+not `atan2(-tm[4], tm[5])`.
+
+Using m10 instead of m01 mirrors/sign-flips the orientation relationship and
+can make the autonomous velocity point behind the actor.
+
+Do not apply another empirical +/- sign workaround around this.
+
+## Why "still runs backwards" is more than the matrix-index bug
+
+Even after fixing the body-yaw seed, the current architecture only overrides:
+
+`S_MountAnimState::m_desiredVelocity`
+
+It does not establish an independent actor/body facing direction.
+
+Henry's on-foot look state still drives/rebuilds:
+
+- `m_lookAngles`;
+- `m_viewRotation`;
+- `m_flatYawQuat`;
+- `m_flatYaw`.
+
+Thus AutoWalk can request a world-space velocity that lies behind or sideways
+relative to Henry's current body/view frame.
+
+The locomotion/animation system can correctly interpret that as backward or
+strafe movement.
+
+So "velocity points along road" != "Henry's body faces/travels along road."
+
+The body-facing seam must be recovered separately.
+
+## Why the camera is still coupled
+
+The current travel-frame patch removed direct camera counter-rotation, but it
+never implemented the mounted body/view split.
+
+Nothing in the current implementation reproduces the native mounted mechanisms
+that keep body/hull yaw separate from rider view:
+
+- actor flat-yaw/body orientation ownership;
+- horse-yaw -> rider `m_lookAngleAccum`;
+- rider camera compose;
+- mounted view-limit channels;
+- mounted recenter/reference-frame behavior.
+
+Therefore the camera remaining tied to travel is expected.
+
+A world-space desiredVelocity override alone cannot create horseback headlook.
+
+## Exact next Ghidra targets
+
+### 1. Finish the real horse actuator chain
+
+Starting from the already recovered request+0x88 write, decompile through:
+
+```text
+C_RiderSync::PushRiderAction 0x18059BC40
+ -> C_RiderPlayerControl / request applier (documented slot 69 path)
+ -> downstream object vf[8]
+ -> field/command consumer
+ -> actual C_Horse movement/body-yaw mutation
+```
+
+Stop only when the code that physically updates horse body/hull orientation is
+identified.
+
+### 2. Recover Henry's on-foot body-facing seam
+
+Decompile:
+
+- `C_ActorMovementController::vf13` — REL 28376 / `0x1804B8E88`;
+- `C_ActorPhysicsState::Tick` — REL 26156 / `0x1804415E0`;
+- `C_Actor::SetViewRotation` — `0x1806440AC`;
+- flat-yaw setter — `0x1806442A8`;
+- owner hold-counter functions:
+  - vf135 `0x18040B580`
+  - vf136 `0x18286139C`.
+
+Key question:
+
+> How does vanilla permit view yaw to change without rebuilding the actor's
+> body/flat yaw, and where can AutoWalk own that body yaw safely?
+
+The upstream RE already notes that SetViewRotation **skips flat-yaw rebuild**
+while either owner hold counter is positive. That is a high-priority lead, not
+yet permission to call it blindly.
+
+### 3. Recover the actual mounted camera split
+
+Decompile together:
+
+- `C_CameraFirstPerson::Compose` — REL 51045 / `0x18094D030`;
+- `C_CameraRider::Compose` — REL 434788 / `0x1839C3748`;
+- horse flat-yaw -> rider accumulator — REL 37998 / `0x1806CCAF8`;
+- mounted centering — REL 56442 / `0x180A501E8`;
+- mounted camera selection predicate `0x1809E6050`;
+- view-limit clamp `0x18053B508`.
+
+Do not implement free-look until the reference frame and flat-yaw ownership are
+understood.
+
+## Next implementation gate
+
+No more travel-frame code changes until both are known:
+
+1. the final physical semantics of the horse steering command;
+2. the on-foot body-yaw ownership seam independent of view yaw.
+
+The current live test demonstrates that neither has been solved yet.
