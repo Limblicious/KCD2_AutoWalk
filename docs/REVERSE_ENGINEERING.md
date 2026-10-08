@@ -554,13 +554,60 @@ hold +0x174 (scoped free-look) + flat-view capture + target-relative limits
   frame/limit-pair/align-speed/stiffness live in the tracker (+0x38) filled
   by the setup's provider chain -- the exact fill to recover next.
 
-### controller+0x11C (the body quat) -- partial
-vf13 writes controller+0x11C from a quat built by FUN_180949f28 (the
-turn-smoothed body quat) and copies it to S_MountAnimState::m_rootRotation
-(out+0x3C, the float-array copy at vf13 line 1921). The complete writer set
-and the final root-orientation consumer (animated character / entity root)
-remain to be enumerated (search_code paging); the copy into m_rootRotation
-is confirmed.
+### Controller mode for the hold-E interaction -- SETTLED: mode 1 (S_OnPressController)
+- RebuildControllerMode (0x180A4E9B8) selects: mode 1 -> S_OnPressController_Factory
+  (the hold-E controller with the hint rows); mode 2 -> S_AutoController_Factory
+  (the no-hold automatic follow).
+- The hold-E UX (horse_magnetism_activate/deactivate hints, the latched bit,
+  the interruption timers) IS the S_OnPressController: its SetHoldLatched is
+  bit-trivial (0x180A4E98C: flags = (flags & ~2) | (latched << 1)) and its
+  tick runs phases 0-5.
+- The AUTO controller's SetHoldLatchedImpl acceptance gates (enter/remain
+  angles, chat gate, snap/flick history) belong to mode 2 ONLY. The port
+  MUST NOT hybridize: the mode-1 port needs the OnPress phases and the tick
+  flow, not the auto acceptance gates or the auto path history.
+- Runtime confirmation: the user's live option (FUN_1804AADE0()+0xB0)
+  logged 1 in the earlier session; the on-disk .data default is 0 (the real
+  default loads from the profile registration).
+
+### OnPress phases for the mode-1 port (branch-by-branch mapping)
+Recovered S_OnPressController_Tick (0x180A4E768), fields +0x20 deactivate,
++0x24 reactivate, +0x28 hintTime, +0x2C flags (bit0 active, bit1 latched,
+bit3 flick, bit4 armed):
+- Phase 0 (armed): rider stick (m_pMove->vf[0x18]) below the const OR
+  move <= 0.2 -> clear bit4 (interruption clears on return-to-neutral);
+  chat-follow -> clear active/latched + zero timers (deactivate).
+- Phase 1: countdown m_deactivateTime + m_hintTime; every 10th frame set
+  C_Player+0xB08+0x110 = 1 (hint visibility); jump request
+  (horseData+0x10C) -> clear active/latched.
+- Phase 2: reset m_deactivateTime; if |riderYaw|*deg < RemainAngle OR
+  move <= 0.2 -> stay; else set bit4 (armed) + copy DeactivateTime/
+  ReactivateTime from the cvars.
+- Phase 3: countdown m_deactivateTime then m_reactivateTime; at 0 -> clear
+  active/latched + timers (sustained manual input deactivates).
+- Phase 5: sample.m_failed -> clear bit0, set bit3 (flick), zero timers.
+- Foot adaptation: the rider stick/move becomes Henry's WASD held state
+  (no analog stick on foot); phase 2 arms when WASD is held beyond the
+  tolerance, phase 0 clears the armed state when WASD returns neutral --
+  brief WASD interruption/resume, sustained WASD deactivates via phase 3.
+
+### Mounted FocusCamera setup tracker fill (from Activate 0x1808B9DB8)
+The tracker (C_FocusCamera+0x38) is filled on activation:
+- +0x20/+0x28 (the target-relative limit pairs) = the setup's +0x1C/+0x28
+  fields (only when the setup's +0x18/+0x24 validity bytes are set, and
+  only when the value is <= the current tracker value).
+- +0x30/+0x38 (the align speeds) = the tuning cvars FUN_1804AADE0()+0x13C/
+  +0x140 and +0x144/+0x148.
+- +0x40 (the stiffness) = the setup's +0x30 field.
+- Mode-2 extra: captures m_capturedFlatView = view-state +0x34/+0x3C,
+  arms the recenter timer (+0x48) from tuning +0x150, and the interp init
+  (0x180A70610) from tuning +0x154.
+- Deactivate restores the FOV-blend fields from tuning +0x15C and releases
+  the +0x174 hold (vf135(0)).
+- REMAINING: the mounted rig's installer call site (who installs the
+  C_FocusCameraNode setup targeting the horse) and the setup struct's
+  source values; plus the controller+0x11C -> m_rootRotation final body
+  consumer.
 
 ### Downstream actuator chain status (Gate A — incomplete by design)
 PushRiderAction (0x18059BC40) is fully decompiled: gate `*(sync+0x18)&1`
