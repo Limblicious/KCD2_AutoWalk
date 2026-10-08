@@ -665,6 +665,21 @@ The second installer in the image = the combat lock path (sub_1808B8548).
 REMAINING Track A: the controller+0x11C -> m_rootRotation final body
 consumer (animated character / entity root orientation update).
 
+### vf13 call site confirmed (pre-physics update 0x181E7D6F0)
+- The movement controller = actor+0x180 (param_1[0x30]); the call is
+  `(**(code**)(*(longlong*)param_1[0x30] + 0x68))(param_1[0x30], uVar9, &local_4f8)`
+  -- vtable slot 13 (0x68/8) with **(controller, frameTime, S_MountAnimState*
+  out)** -- confirming the hook signature (void*, float, float*).
+- The request (zeroed by 0x180A709E8) then flows to
+  C_ActorPhysicsState_Tick (param_1[0x47] = the actor's physics state; the
+  +0x18 look delta -> m_lookDeltaRequest) and to the look/aim IK vf250
+  (0x180640950, consuming the +0x24/+0x30 look/aim targets via
+  0x180E7C42C).
+- m_rootRotation (+0x3C, the copy of controller+0x11C) is NOT consumed by
+  either of the two identified readers in the decompiled paths; its final
+  consumer (the animated character root orientation) is still unconfirmed
+  ("MED" in the header). The +0x11C writer set enumeration remains open.
+
 ### Downstream actuator chain status (Gate A — incomplete by design)
 PushRiderAction (0x18059BC40) is fully decompiled: gate `*(sync+0x18)&1`
 && !skip; FUN_18059BBF8 converts {0,m_yawSmoothed} into the movement
