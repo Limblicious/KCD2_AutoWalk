@@ -1178,3 +1178,72 @@ Then add deterministic unit-style state-machine tests for at least:
 - pathB rolling last-10 behavior.
 
 Until these pass, `RoadFollowPort` remains an unwired research scaffold.
+
+
+---
+
+# Review of 3f39a21 / 86ec0a7 — mode 1 and FocusCamera
+
+## Track A
+
+The FocusCamera work is now coherent:
+
+- mounted rig installer = C_FocusCameraNode;
+- setup values are asset-driven;
+- zero-id provider can bypass target-entity rejection;
+- native FocusCamera owns +0x174, captured flat-view state, target-relative
+  limits, align speeds and stiffness.
+
+Remaining static/body item: controller+0x11C -> m_rootRotation -> physical
+Henry root/body consumer.
+
+## Track B — critical ABI contradiction before rewrite
+
+Mode 1 is the correct UX target, but the OnPress slot-1 function still needs a
+fresh decompilation.
+
+The branch-complete top-level tick calls controller vtable slot 1 as:
+
+```text
+bool slot1(controller, latched, hit, sample*)
+```
+
+The current AutoController RE confirms this corrected signature.
+
+The old OnPress note/header instead says:
+
+```text
+void SetHoldLatched(controller, bool latched)
+```
+
+and identifies 0x180A4E98C as a trivial bit write.
+
+A single virtual slot cannot simultaneously have those two interface
+contracts. The earlier public header mapping is already known to have been
+wrong for AutoController, so it must not be trusted for OnPress without
+rechecking the binary.
+
+### Required next action
+Re-decompile OnPress vtable slot 1 at 0x180A4E98C from the
+S_HorseRoadFollow::Tick call site:
+
+- apply the 4-argument prototype;
+- inspect all argument reads;
+- recover AL/RAX return semantics;
+- identify whether hit/sample affect acceptance;
+- update I_MagnetismController's recovered interface accordingly.
+
+Only then rewrite RoadFollowPort as a pure mode-1 controller.
+
+### Mode-1 rewrite rule
+Once slot 1 is settled, delete all S_AutoController-only logic from the
+runtime-target port. Preserve only:
+
+- common S_HorseRoadFollow::Tick flow/helpers that run regardless of mode;
+- exact S_OnPressController slot-1 behavior;
+- exact OnPress phases 0-5;
+- exact OnPress GetRoadDistance;
+- explicit Henry adaptations for rider input/jump/chat state.
+
+Do not carry AutoController path-history/flick/snap acceptance gates into the
+mode-1 controller simply because they were already coded.
