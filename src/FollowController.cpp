@@ -11,6 +11,7 @@
 #include "InputSeam.h"
 #include "Log.h"
 #include "NativeMagnetism.h"
+#include "RoadFollowPort.h"
 #include "Offsets/vtables/IInput.h"
 #include "Offsets/vtables/IInputEventListener.h"
 #include "crysystem/CCryAction.h"
@@ -63,6 +64,16 @@ void MovementRequestHook(void* self, float dt, float* out)
     const float yaw = g_travelYaw;
     out[3] = -std::sin(yaw) * speed;
     out[4] = std::cos(yaw) * speed;
+
+    // Body-facing seam: m_rootRotation (S_MountAnimState+0x3C) carries the
+    // controller's internal body quat to the character/root orientation.
+    // Overwrite it with the travel-frame yaw quat so the body faces the
+    // travel direction while the look state (the camera) is untouched.
+    const float half = yaw * 0.5f;
+    out[15] = 0.0f;                     // quat x
+    out[16] = 0.0f;                     // quat y
+    out[17] = std::sin(half);           // quat z
+    out[18] = std::cos(half);           // quat w
 }
 
 void EnsureMovementHook()
@@ -113,7 +124,6 @@ bool g_wHeld = false;
 std::chrono::steady_clock::time_point g_lastLog{};
 std::chrono::steady_clock::time_point g_lastTick{};
 
-NativeMagnetism::OnPressState g_state{};
 NativeMagnetism::YawSmoother g_smoother{};
 float g_targetYaw = 0.0f;
 bool g_targetValid = false;
@@ -385,15 +395,14 @@ void Enable()
     g_targetValid = false;
     g_travelValid = false;
     g_followActive.store(false);
-    g_state = {};
-    FootRoad::NativeSetHoldLatched(true);
-    Log::Write("[AutoWalk] FollowController: enabled (native latch).");
+    RoadFollowPort::SetActionActive(true);
+    Log::Write("[AutoWalk] FollowController: enabled (mode-1 engage).");
 }
 
 void Disable()
 {
     ReleaseForward();
-    FootRoad::NativeSetHoldLatched(false);
+    RoadFollowPort::SetActionActive(false);
     g_phase.store(Phase::Disabled);
     g_targetValid = false;
     UpdatePromptFlags(false, false, false);
@@ -416,7 +425,7 @@ void Tick()
     if (!player || IsMounted()) {
         if (g_phase.load() != Phase::Disabled) {
             ReleaseForward();
-            FootRoad::NativeSetHoldLatched(false);
+            RoadFollowPort::SetActionActive(false);
             g_phase.store(Phase::Disabled);
             Log::Write("[AutoWalk] FollowController: stopped (player unavailable or mounted).");
         }
@@ -440,9 +449,7 @@ void Tick()
         return;
     }
 
-    // One-time native facade wiring: property vtable (game GetValue), the
-    // rider-sync fabrication (GetRider -> real player) and the neutral move
-    // adapter. The native rebuild then creates the on-press controller.
+    // One-time native facade wiring: the sampler facade initialization.
     if (!g_nativeEnsured) {
         g_nativeEnsured = true;
         FootRoad::EnsureNativeRoadFollow();
@@ -450,43 +457,35 @@ void Tick()
                    std::to_string(FootRoad::NativeFollowReady()));
     }
 
-    // The full native tick (S_HorseRoadFollow_Tick REL 56405): sampling,
-    // path persistence, controller phases and the yaw command -- the same
-    // chain S_HorseData_Update runs for the mounted horse.
-    const bool latched = FootRoad::NativeLatched();
-
-    FootRoad::FootRoadProbe sample{};
-    // The native acquisition radius: GetRoadDistance(latched) -- the OnPress
-    // D4/D8 cvars (RoadMagnetismOnPressRoadDistOff/On).
-    const float roadDistance = latched ? cvars->roadDistOn : cvars->roadDistOff;
-    const bool haveSample = FootRoad::TickNativeRoadFollow(dt, sample, roadDistance);
-
-    const bool onRoad = haveSample && sample.hasHit;
-
-    // Engagement via the native hold-E dispatch: the OnPress SetHoldLatched
-    // is a bit-trivial latch; the tick's own phases decide enter/reject.
+    // The hold-E actions drive the mode-1 machine's action-controlled
+    // engage bit (bit0); the machine runs the recovered OnPress flow.
     const bool engage = g_engageRequested.exchange(false);
     const bool disengage = g_disengageRequested.exchange(false);
-    if (engage && !latched && onRoad) {
-        FootRoad::NativeSetHoldLatched(true);
-        g_state = {};
-        g_state.flags |= 0x01; // active: the OnPress enter state
-        Log::Write("[AutoWalk] FollowController: latched via hold E.");
+    if (engage) {
+        RoadFollowPort::SetActionActive(true);
+        Log::Write("[AutoWalk] FollowController: engaged via hold E.");
     }
     if (disengage) {
-        FootRoad::NativeSetHoldLatched(false);
+        RoadFollowPort::SetActionActive(false);
         Disable();
         return;
     }
 
-    // Manual WASD: the recovered OnPress interruption semantics (phase 2
-    // arms on manual input, phases 3 count the DeactivateTime/ReactivateTime
-    // grace window, neutral input clears the armed state) -- evaluated only
-    // while latched.
     const bool manualHeld = IsManualHeld();
+    const bool chat = IsChatFollowActive();
+
+    // The recovered mode-1 tick: the native sampler with the native
+    // acquisition radius + the OnPress state machine (unwired machine ->
+    // now wired).
+    FootRoad::FootRoadProbe sample{};
+    RoadFollowPort::Tick(dt, *cvars, manualHeld, chat, sample);
+    const auto& portState = RoadFollowPort::GetState();
+
+    const bool latched = portState.latched;
+    const bool onRoad = sample.hasHit;
 
     if (!latched) {
-        // Idle: keep the prompt state up; the state machine is inert.
+        // Idle/released: keep the prompt state up.
         if (g_phase.load() != Phase::Disabled) {
             ReleaseForward();
             g_phase.store(Phase::Disabled);
@@ -498,19 +497,6 @@ void Tick()
         return;
     }
 
-    const bool chat = IsChatFollowActive();
-    const bool followActive = NativeMagnetism::TickStateMachine(
-        g_state, dt, *cvars, manualHeld, chat, false, false);
-    if (!followActive) {
-        // The recovered interruption timers exhausted -> deactivate.
-        FootRoad::NativeSetHoldLatched(false);
-        Disable();
-        return;
-    }
-
-    // Following: the native latch owns the decision. During a brief sample
-    // miss the latch survives (grace window) and the last yaw command
-    // persists -- Henry keeps curving back onto the road.
     const bool following = latched;
     UpdatePromptFlags(onRoad, latched, manualHeld);
 
@@ -521,8 +507,10 @@ void Tick()
     // command turns the frame each frame -- exactly the recovered
     // HorseYaw_SmoothCD -> PushRiderAction actuator shape. The movement
     // hook then replaces the vanilla camera-relative velocity direction
-    // with the travel frame (keeping the speed magnitude), so the body
-    // travels the road while the camera is never touched.
+    // with the travel frame (keeping the speed magnitude) AND writes the
+    // travel-frame yaw quat into the request's m_rootRotation (the
+    // body-facing seam), so the body travels the road while the camera is
+    // never touched.
     if (following && !manualHeld) {
         // Sample-acceptance gate recovered from SetHoldLatchedImpl (gate 5):
         // a sample is only accepted within RoadMagnetismEnterAngle of the
@@ -530,7 +518,7 @@ void Tick()
         // at crossroads (a 100+ degree command jump); the gate rejects the
         // flips while passing slow legitimate curves -- the native
         // path-continuity behavior.
-        const float rawTarget = FootRoad::NativeMagnetYaw();
+        const float rawTarget = portState.magnetYaw;
         if (!g_targetValid) {
             g_targetYaw = rawTarget;
             g_targetValid = true;
@@ -578,14 +566,11 @@ void Tick()
         Log::Write(std::string("[AutoWalk] follow: latched=") +
                    std::to_string(latched) +
                    " hasHit=" + std::to_string(onRoad) +
-                   " live=" + std::to_string(FootRoad::NativeMagnetismLive()) +
-                   " magnetYaw=" + std::to_string(FootRoad::NativeMagnetYaw()) +
+                   " live=" + std::to_string(portState.magnetismLive) +
+                   " magnetYaw=" + std::to_string(portState.magnetYaw) +
                    " target=" + std::to_string(g_targetYaw) +
                    " yawFrom=" + std::to_string(sample.yawFrom) +
-                   " along=(" + std::to_string(sample.alongX) + "," +
-                   std::to_string(sample.alongY) + ")" +
-                   " player=(" + std::to_string(sample.playerX) + "," +
-                   std::to_string(sample.playerY) + ")" +
+                   " flags=" + std::to_string(static_cast<int>(portState.flags)) +
                    " smoothed=" + std::to_string(g_smoother.smoothed) +
                    " travelYaw=" + std::to_string(g_travelYaw) +
                    " rotMax=" + std::to_string(cvars->rotationMax) +
