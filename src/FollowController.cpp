@@ -214,34 +214,6 @@ bool IsMounted()
     return input && input->m_pHorse;
 }
 
-// The game's pause/loading gate: while the game is paused (ESC menu, pause
-// reasons) or loading, the follow must not hold W -- the synthetic hold
-// otherwise scrolls the menus and gates other input (the F5 quicksave).
-bool IsGamePausedOrLoading()
-{
-    auto* framework = CCryAction::GetInstance();
-    if (!framework) {
-        return false;
-    }
-    const auto vtable = *reinterpret_cast<std::uintptr_t*>(framework);
-    // IGameFramework slot [14]: bool(idx) -- cmp dword[this+idx*4+8],0; setnle
-    // (the pause-reason counters). Slot [17]: IsLoadingSaveGame (VERIFIED).
-    using PauseFn = bool (*)(void*, std::uint16_t);
-    const auto pauseFn = *reinterpret_cast<PauseFn*>(vtable + 14 * 8);
-    if (pauseFn) {
-        // CCryAction keeps 15 pause-source counters; scan them all so any
-        // pause (menu, cutscene, debug, load, etc.) releases the hold.
-        for (std::uint16_t i = 0; i < 15; ++i) {
-            if (pauseFn(framework, i)) {
-                return true;
-            }
-        }
-    }
-    using LoadingFn = bool (*)(void*);
-    const auto loadingFn = *reinterpret_cast<LoadingFn*>(vtable + 17 * 8);
-    return loadingFn && loadingFn(framework);
-}
-
 void ReleaseForward()
 {
     if (g_wHeld && InputSeam::IsKeyHeld(Offsets::eKI_W)) {
@@ -258,6 +230,93 @@ void HoldForward()
         g_syntheticPressInFlight.store(false);
     }
     g_wHeld = true;
+}
+
+
+// Target the actual KCD2 root-menu lifecycle rather than treating arbitrary
+// framework pause-source counters as "menu open". C_UIMenu::Open/Close are the
+// authoritative state transition for the ESC/root pause menu.
+std::atomic<bool> g_rootMenuOpen{false};
+bool g_menuHooksAttempted = false;
+bool g_menuHooksInstalled = false;
+
+using UIMenuOpenFn = void (*)(void* self, char mode);
+using UIMenuCloseFn = void (*)(void* self);
+UIMenuOpenFn g_originalUIMenuOpen = nullptr;
+UIMenuCloseFn g_originalUIMenuClose = nullptr;
+
+void UIMenuOpenHook(void* self, char mode)
+{
+    // Release before the menu begins consuming keyboard input so our synthetic
+    // W cannot become a held navigation key.
+    g_rootMenuOpen.store(true);
+    ReleaseForward();
+    g_lastTick = {};
+    if (g_originalUIMenuOpen) {
+        g_originalUIMenuOpen(self, mode);
+    }
+}
+
+void UIMenuCloseHook(void* self)
+{
+    if (g_originalUIMenuClose) {
+        g_originalUIMenuClose(self);
+    }
+    // Do not synthesize W from the UI hook. The normal follow tick will resume
+    // it on the next frame if the mode-1 road latch is still active.
+    g_rootMenuOpen.store(false);
+    g_lastTick = {};
+}
+
+void EnsureMenuHooks()
+{
+    if (g_menuHooksInstalled || g_menuHooksAttempted) {
+        return;
+    }
+    g_menuHooksAttempted = true;
+
+    const auto moduleBase = reinterpret_cast<std::uintptr_t>(
+        GetModuleHandleA("WHGame.dll"));
+    if (!moduleBase) {
+        return;
+    }
+
+    // wh::I_UIMenu::Open / Close implementations for KCD2 1.5.6.
+    void* openTarget = reinterpret_cast<void*>(moduleBase + 0xC04B38);
+    void* closeTarget = reinterpret_cast<void*>(moduleBase + 0xC04780);
+
+    const MH_STATUS openCreate = MH_CreateHook(
+        openTarget, reinterpret_cast<void*>(&UIMenuOpenHook),
+        reinterpret_cast<void**>(&g_originalUIMenuOpen));
+    if (openCreate != MH_OK) {
+        Log::Write(std::string("[AutoWalk] FollowController: C_UIMenu::Open hook create failed (status=") +
+                   std::to_string(static_cast<int>(openCreate)) + ").");
+        return;
+    }
+
+    const MH_STATUS closeCreate = MH_CreateHook(
+        closeTarget, reinterpret_cast<void*>(&UIMenuCloseHook),
+        reinterpret_cast<void**>(&g_originalUIMenuClose));
+    if (closeCreate != MH_OK) {
+        MH_RemoveHook(openTarget);
+        Log::Write(std::string("[AutoWalk] FollowController: C_UIMenu::Close hook create failed (status=") +
+                   std::to_string(static_cast<int>(closeCreate)) + ").");
+        return;
+    }
+
+    const MH_STATUS openEnable = MH_EnableHook(openTarget);
+    const MH_STATUS closeEnable = MH_EnableHook(closeTarget);
+    if (openEnable != MH_OK || closeEnable != MH_OK) {
+        MH_DisableHook(openTarget);
+        MH_DisableHook(closeTarget);
+        MH_RemoveHook(openTarget);
+        MH_RemoveHook(closeTarget);
+        Log::Write("[AutoWalk] FollowController: root-menu hooks could not be enabled.");
+        return;
+    }
+
+    g_menuHooksInstalled = true;
+    Log::Write("[AutoWalk] FollowController: root-menu Open/Close hooks installed.");
 }
 
 class InputListener final : public Offsets::IInputEventListener {
@@ -398,7 +457,7 @@ void UpdatePromptFlags(bool onRoad, bool engaged, bool manualHeld)
 
     // [7] disable reason on the activate row (by value, callee destroys).
     CryStringT<char> reason(chatFollow ? "ui_magnetism_in_follow"
-                                       : "ui_magnetism_not_on_path");
+                                       : "ui_autowalk_henry_not_on_path");
     actionSets->SetActionDisableReason(ctx, activate, reason, 1);
 
     // [4] enabled state.
@@ -446,6 +505,7 @@ void Disable()
 void Reset()
 {
     ReleaseForward();
+    g_rootMenuOpen.store(false);
     RoadFollowPort::SetActionActive(false);
     ResetTravelFrame();
     g_phase.store(Phase::Disabled);
@@ -453,6 +513,8 @@ void Reset()
 
 void Tick()
 {
+    EnsureMenuHooks();
+
     auto* framework = CCryAction::GetInstance();
     auto* player = framework
         ? static_cast<wh::entitymodule::C_Player*>(framework->GetClientActor())
@@ -486,13 +548,12 @@ void Tick()
         return;
     }
 
-    // Paused or loading: release the hold and suspend the follow (no
-    // machine advance, no prompt) -- the synthetic W must never reach the
-    // menus.
-    if (IsGamePausedOrLoading()) {
+    // Root menu open: preserve the road-follow/controller state, but never
+    // keep our synthetic W held while UI owns the keyboard. No sampling,
+    // timers, prompt mutation, or travel-frame reset occurs here.
+    if (g_rootMenuOpen.load()) {
         ReleaseForward();
-        ResetTravelFrame();
-        UpdatePromptFlags(false, false, false);
+        g_lastTick = now;
         return;
     }
 
