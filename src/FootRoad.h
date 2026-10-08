@@ -77,7 +77,7 @@ bool RefreshStandaloneFacade();
 // own (REL 162514).
 bool EnsureNativeRoadFollow();      // one-time tables + facade wiring; log-gated
 bool NativeFollowReady();           // facade + native controller exist
-bool TickNativeRoadFollow(float dt, FootRoadProbe& out);  // runs the native tick
+bool TickNativeRoadFollow(float dt, FootRoadProbe& out, float roadDistance);  // runs the native tick
 bool NativeLatched();               // rf.m_latched (the native follow state)
 bool NativeMagnetismLive();         // hd.m_magnetismLive
 float NativeMagnetYaw();            // hd.m_magnetYaw (the native yaw command)

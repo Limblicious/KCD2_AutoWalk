@@ -39,26 +39,29 @@ using MovementRequestFn = void (*)(void* self, float dt, float* out);
 MovementRequestFn g_originalMovementRequest = nullptr;
 bool g_movementHookInstalled = false;
 bool g_movementHookAttempted = false;
-float g_pendingYawDelta = 0.0f;
-int g_hookMisses = 0;
+
+// The autonomous travel frame: a body/travel heading independent of the
+// camera look. The native steering command turns this frame; the movement
+// hook replaces the vanilla camera-relative velocity direction with it.
+std::atomic<bool> g_followActive{false};
+float g_travelYaw = 0.0f;
+bool g_travelValid = false;
 
 void MovementRequestHook(void* self, float dt, float* out)
 {
     g_originalMovementRequest(self, dt, out);
-
-    const float d = g_pendingYawDelta;
-    g_pendingYawDelta = 0.0f;
-    if (d == 0.0f) {
+    if (!g_followActive.load() || !g_travelValid) {
         return;
     }
-    // m_desiredVelocity at out+0x0C (floats [3],[4],[5]); yaw-rotate in the
-    // world XY plane.
-    const float c = std::cos(d);
-    const float s = std::sin(d);
+    // Keep the vanilla speed magnitude; replace only the horizontal
+    // direction with the autonomous travel heading (Cry yaw convention:
+    // forward = (sin yaw, cos yaw)).
     const float x = out[3];
     const float y = out[4];
-    out[3] = x * c - y * s;
-    out[4] = x * s + y * c;
+    const float speed = std::sqrt(x * x + y * y);
+    const float yaw = g_travelYaw;
+    out[3] = std::sin(yaw) * speed;
+    out[4] = std::cos(yaw) * speed;
 }
 
 void EnsureMovementHook()
@@ -109,8 +112,8 @@ bool g_wHeld = false;
 std::chrono::steady_clock::time_point g_lastLog{};
 std::chrono::steady_clock::time_point g_lastTick{};
 
+NativeMagnetism::OnPressState g_state{};
 NativeMagnetism::YawSmoother g_smoother{};
-float g_prevSmoothedYaw = 0.0f;
 float g_targetYaw = 0.0f;
 bool g_targetValid = false;
 bool g_nativeEnsured = false;
@@ -119,8 +122,6 @@ bool g_nativeEnsured = false;
 std::atomic<bool> g_engageRequested{false};
 std::atomic<bool> g_disengageRequested{false};
 std::atomic<bool> g_manualInput{false};
-float g_manualHeldTime = 0.0f;
-constexpr float kManualHoldDeactivateSeconds = 3.0f;
 
 // True while the current PostInputEvent call is our own synthetic W press.
 std::atomic<bool> g_syntheticPressInFlight{false};
@@ -379,9 +380,11 @@ void Enable()
     EnsureInputListener();
     g_phase.store(Phase::AwaitingRoad);
     g_smoother = {};
-    g_prevSmoothedYaw = 0.0f;
     g_targetYaw = 0.0f;
     g_targetValid = false;
+    g_travelValid = false;
+    g_followActive.store(false);
+    g_state = {};
     FootRoad::NativeSetHoldLatched(true);
     Log::Write("[AutoWalk] FollowController: enabled (native latch).");
 }
@@ -449,11 +452,15 @@ void Tick()
     // The full native tick (S_HorseRoadFollow_Tick REL 56405): sampling,
     // path persistence, controller phases and the yaw command -- the same
     // chain S_HorseData_Update runs for the mounted horse.
+    const bool latched = FootRoad::NativeLatched();
+
     FootRoad::FootRoadProbe sample{};
-    const bool haveSample = FootRoad::TickNativeRoadFollow(dt, sample);
+    // The native acquisition radius: GetRoadDistance(latched) -- the OnPress
+    // D4/D8 cvars (RoadMagnetismOnPressRoadDistOff/On).
+    const float roadDistance = latched ? cvars->roadDistOn : cvars->roadDistOff;
+    const bool haveSample = FootRoad::TickNativeRoadFollow(dt, sample, roadDistance);
 
     const bool onRoad = haveSample && sample.hasHit;
-    const bool latched = FootRoad::NativeLatched();
 
     // Engagement via the native hold-E dispatch: the OnPress SetHoldLatched
     // is a bit-trivial latch; the tick's own phases decide enter/reject.
@@ -461,6 +468,7 @@ void Tick()
     const bool disengage = g_disengageRequested.exchange(false);
     if (engage && !latched && onRoad) {
         FootRoad::NativeSetHoldLatched(true);
+        g_state = {};
         Log::Write("[AutoWalk] FollowController: latched via hold E.");
     }
     if (disengage) {
@@ -469,19 +477,17 @@ void Tick()
         return;
     }
 
-    // Manual WASD: held >3s deactivates (user requirement; the native
-    // phases already handle the graceful interruption/falloff).
+    // Manual WASD: the recovered OnPress interruption semantics (phase 2
+    // arms on manual input, phases 3 count the DeactivateTime/ReactivateTime
+    // grace window, neutral input clears the armed state).
     const bool manualHeld = IsManualHeld();
-    if (manualHeld) {
-        g_manualHeldTime += dt;
-        if (g_manualHeldTime >= kManualHoldDeactivateSeconds) {
-            Log::Write("[AutoWalk] FollowController: deactivated after 3s of manual input.");
-            FootRoad::NativeSetHoldLatched(false);
-            Disable();
-            return;
-        }
-    } else {
-        g_manualHeldTime = 0.0f;
+    const bool chat = IsChatFollowActive();
+    const bool followActive = NativeMagnetism::TickStateMachine(
+        g_state, dt, *cvars, manualHeld, chat, false, false);
+    if (!followActive) {
+        FootRoad::NativeSetHoldLatched(false);
+        Disable();
+        return;
     }
 
     if (!latched) {
@@ -500,11 +506,15 @@ void Tick()
     const bool following = latched;
     UpdatePromptFlags(onRoad, latched, manualHeld);
 
-    // Steering: SmoothCD chases the native road yaw command; the per-frame
-    // delta of the smoothed yaw rotates the movement request's desired
-    // velocity (the movement-controller hook) -- Henry's body turns through
-    // the movement system while the look state (the camera) is untouched:
-    // the mounted decoupling.
+    // Steering: the native command semantics. m_magnetYaw (the road
+    // direction at the nearest point) becomes a relative turn command
+    // against the persistent travel frame; the critically-damped smoother
+    // chases that command (rate-limited, sign-flip reset) and the smoothed
+    // command turns the frame each frame -- exactly the recovered
+    // HorseYaw_SmoothCD -> PushRiderAction actuator shape. The movement
+    // hook then replaces the vanilla camera-relative velocity direction
+    // with the travel frame (keeping the speed magnitude), so the body
+    // travels the road while the camera is never touched.
     if (following && !manualHeld) {
         // Sample-acceptance gate recovered from SetHoldLatchedImpl (gate 5):
         // a sample is only accepted within RoadMagnetismEnterAngle of the
@@ -522,56 +532,32 @@ void Tick()
         }
 
         EnsureMovementHook();
-        NativeMagnetism::SmoothCD(g_smoother, g_targetYaw, dt, *cvars);
 
-        if (!g_smoother.initialized) {
-            g_smoother.initialized = true;
-            if (auto* state = GetPhysicsState()) {
-                g_smoother.smoothed = state->m_lookAngles.z; // seed at current view yaw
+        // Initialize the travel frame at Henry's current body yaw.
+        if (!g_travelValid) {
+            float bodyYaw = 0.0f;
+            auto* framework2 = CCryAction::GetInstance();
+            if (auto* entity = framework2 ? framework2->GetClientEntity() : nullptr) {
+                const auto* tm = reinterpret_cast<const float*>(
+                    reinterpret_cast<std::uintptr_t>(entity) + 0x58);
+                bodyYaw = std::atan2(tm[4], tm[5]);
             }
-            g_prevSmoothedYaw = g_smoother.smoothed;
+            g_travelYaw = bodyYaw;
+            g_travelValid = true;
+            g_smoother = {}; // the command smoother starts neutral
         }
 
+        const float cmd = WrapPi(g_targetYaw - g_travelYaw);
+        NativeMagnetism::SmoothCD(g_smoother, cmd, dt, *cvars);
         const float sign = g_steerInvert ? -1.0f : 1.0f;
-        const float delta = WrapPi(g_smoother.smoothed - g_prevSmoothedYaw) * sign;
-        g_prevSmoothedYaw = g_smoother.smoothed;
+        g_travelYaw += g_smoother.smoothed * sign;
 
-        if (g_movementHookInstalled) {
-            // Did the hook consume the previous frame's delta? (it zeroes
-            // the shared value when the movement request runs). If not, the
-            // interfuscated vtable path bypasses the static body -- fall
-            // back to the proven look-accum channel.
-            if (g_pendingYawDelta != 0.0f) {
-                g_hookMisses++;
-            } else {
-                g_hookMisses = 0;
-            }
-            if (g_hookMisses >= 3 && delta != 0.0f) {
-                if (auto* state = GetPhysicsState()) {
-                    state->m_lookAngleAccum.z += delta;
-                }
-            }
-            g_pendingYawDelta = delta;
-
-            // Camera decoupling (first person): the on-foot look-body
-            // coupling rotates the view with the body's turn; counter-rotate
-            // the look state by the commanded delta so the view stays put
-            // while the body walks the road. The mouse still adds its own
-            // look on top (untouched request channel).
-            if (g_hookMisses < 3 && delta != 0.0f) {
-                if (auto* state = GetPhysicsState()) {
-                    state->m_lookAngles.z -= delta;
-                }
-            }
-        } else {
-            if (auto* state = GetPhysicsState()) {
-                state->m_lookAngleAccum.z += delta;
-            }
-        }
-
+        g_followActive.store(true);
         HoldForward();
         g_phase.store(Phase::Following);
     } else {
+        g_followActive.store(false);
+        g_travelValid = false;
         ReleaseForward();
         g_phase.store(Phase::AwaitingRoad);
     }
@@ -591,9 +577,9 @@ void Tick()
                    " player=(" + std::to_string(sample.playerX) + "," +
                    std::to_string(sample.playerY) + ")" +
                    " smoothed=" + std::to_string(g_smoother.smoothed) +
+                   " travelYaw=" + std::to_string(g_travelYaw) +
                    " rotMax=" + std::to_string(cvars->rotationMax) +
-                   " enterAngle=" + std::to_string(cvars->enterAngle) +
-                   " velDelta=" + std::to_string(g_pendingYawDelta));
+                   " enterAngle=" + std::to_string(cvars->enterAngle));
     }
 }
 

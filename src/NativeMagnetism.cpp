@@ -49,6 +49,8 @@ bool RefreshFrameCVars(const FrameCVars*& out)
     g_cvars.smoothOutSpeed = read(0xEC);
     g_cvars.smoothInSpeed = read(0xF0);
     g_cvars.clampDelta = read(0x16C);
+    g_cvars.roadDistOff = read(0xD4);
+    g_cvars.roadDistOn = read(0xD8);
     g_cvars.deactivateTime = read(0x204);
     g_cvars.reactivateTime = read(0x208);
     g_cvarsValid = true;

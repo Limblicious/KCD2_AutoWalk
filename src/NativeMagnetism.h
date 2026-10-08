@@ -12,6 +12,8 @@ struct FrameCVars {
     float smoothOutSpeed = 0.0f; // +0xEC  RotationSmoothOutSpeed
     float smoothInSpeed = 0.0f;  // +0xF0  RotationSmoothInSpeed
     float clampDelta = 0.0f;     // +0x16C ClampDelta
+    float roadDistOff = 0.0f;    // +0xD4  RoadMagnetismOnPressRoadDistOff
+    float roadDistOn = 0.0f;     // +0xD8  RoadMagnetismOnPressRoadDistOn
     float deactivateTime = 0.0f; // +0x204 RoadMagnetismDeactivateTime
     float reactivateTime = 0.0f; // +0x208 RoadMagnetismReactivateTime
 };

@@ -2,6 +2,8 @@
 
 #include <chrono>
 
+#include <MinHook.h>
+
 #include "KCSE/KCSEAPI.h"
 #include "CryEngine/CryCommon/IConsole.h"
 #include "crysystem/CCryAction.h"
@@ -433,6 +435,11 @@ KCSE_PLUGIN_INFO("KCD2_AutoWalk", "Limblicious", 1);
 KCSE_PLUGIN_LOAD(kcse)
 {
     AutoWalk::Log::Initialize();
+
+    if (MH_Initialize() != MH_OK) {
+        AutoWalk::Log::Write("[AutoWalk] MinHook init failed.");
+        return false;
+    }
 
     g_runtime = AutoWalk::Compatibility::Capture(kcse);
     AutoWalk::Log::Write("[AutoWalk] Plugin load.");

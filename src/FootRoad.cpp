@@ -169,7 +169,7 @@ bool NativeFollowReady()
     return GetPersistentFacade().initialized;
 }
 
-bool TickNativeRoadFollow(float dt, FootRoadProbe& out)
+bool TickNativeRoadFollow(float dt, FootRoadProbe& out, float roadDistance)
 {
     out = FootRoadProbe{};
 
@@ -183,6 +183,13 @@ bool TickNativeRoadFollow(float dt, FootRoadProbe& out)
     auto* hd = reinterpret_cast<wh::entitymodule::S_HorseData*>(&facade.horseData);
     wh::entitymodule::S_HorseMagnetismSample sample{};
 
+    // The native acquisition/remain radius (controller GetRoadDistance ->
+    // the OnPress D4/D8 cvars); passing zero degraded edge-of-road
+    // acquisition. The recovered call: wrapper(this, ..., distance, &out).
+    if (roadDistance <= 0.0f) {
+        roadDistance = 0.0f; // the builder treats 0 as its default
+    }
+
     // The proven-safe wrapper call (REL 194146): the sample out register is
     // set immediately before the call, nothing between can clobber it.
     const auto fn = REL::Relocation<RoadSampleWrapperFn>(kIdRoadSampleWrapper).get();
@@ -190,7 +197,7 @@ bool TickNativeRoadFollow(float dt, FootRoadProbe& out)
         Log::Write("[AutoWalk] footRoadNative: wrapper unresolved.");
         return false;
     }
-    const bool ok = fn(rf, nullptr, 0.0f, &sample);
+    const bool ok = fn(rf, nullptr, roadDistance, &sample);
     CopySampleIntoProbe(sample, ok, out);
 
     // Player world position from the client entity TM (+0x58 Matrix34:
@@ -232,6 +239,7 @@ bool TickNativeRoadFollow(float dt, FootRoadProbe& out)
         if (g_missCounter >= kMissGraceFrames) {
             rf->m_latched = 0;
             g_missCounter = 0;
+            g_latchPending = false; // released: a later hit must not relatch
         }
     }
     return ok;
