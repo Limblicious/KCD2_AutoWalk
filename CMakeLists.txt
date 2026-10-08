@@ -66,3 +66,13 @@ set_target_properties(KCD2_AutoWalk PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release"
     RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin/RelWithDebInfo")
+
+# Deterministic state-machine tests for the pure mode-1 road-follow machine.
+# The test executable links only the game-independent machine TU.
+enable_testing()
+add_executable(RoadFollowMachineTests
+    tests/RoadFollowMachineTests.cpp
+    src/RoadFollowMachine.cpp)
+target_include_directories(RoadFollowMachineTests PRIVATE "${CMAKE_SOURCE_DIR}/src")
+target_compile_options(RoadFollowMachineTests PRIVATE /utf-8)
+add_test(NAME RoadFollowMachineTests COMMAND RoadFollowMachineTests)

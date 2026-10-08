@@ -1,6 +1,7 @@
 #pragma once
 
 #include "NativeMagnetism.h"
+#include "RoadFollowMachine.h"
 
 namespace AutoWalk::FootRoad {
 struct FootRoadProbe;
@@ -8,75 +9,26 @@ struct FootRoadProbe;
 
 namespace AutoWalk::RoadFollowPort {
 
-// UNWIRED PARTIAL PORT SCAFFOLD.
-// This is NOT yet a faithful/native-equivalent port and must not be wired into
-// FollowController until docs/CURRENT_IMPLEMENTATION_AUDIT.md Track-B gates
-// are resolved. It currently contains recovered pieces from
-// S_HorseRoadFollow/S_OnPress/S_Auto around the proven native sampler, but the
-// native controller modes and several gates/transitions are not yet preserved
-// exactly. This module owns the ROAD-FOLLOWING state
-// machine only; it does not touch the camera, the movement hook, or the
-// input seam (Track B, separate from the camera/body Track A).
+// Game-facing wrapper around the pure mode-1 machine (RoadFollowMachine.h):
+// samples the road through the proven native wrapper (FootRoad, REL 194146)
+// with the native acquisition radius (GetRoadDistance -> the OnPress
+// RoadMagnetismOnPressRoadDistOff/On cvars) and feeds the recovered
+// state machine. UNWIRED: not yet driven by FollowController.
 //
-// See docs/REVERSE_ENGINEERING.md:
-//   - S_HorseRoadFollow::Tick (0x180A4E5AC)
-//   - S_AutoController::SetHoldLatched gates (0x1829F1C70)
-//   - S_OnPressController phases (0x180A4E768)
-//   - PathHistory (0x181ECA180 prune / 0x181ECA440 flick score)
-//   - HorseRoadFollow_PushPathB (0x180A4E39C) / PublishMagnetism
-//     (0x180A4DE5C) / UpdateTurnParams (0x180A4DFF4)
+// Movement ownership and controller interruption stay separate: the manual
+// input only feeds the OnPress phases; the movement hook's ownership switch
+// is FollowController's concern (Track A), not this module's.
 
-struct State {
-    // S_HorseRoadFollow persistence.
-    bool latched = false;
+// Engage/disengage via the hold-E action: bit0 = the action-controlled
+// active state.
+void SetActionActive(bool active);
 
-    // OnPress controller fields (+0x20..+0x2C).
-    float deactivateTime = 0.0f;
-    float reactivateTime = 0.0f;
-    float hintTime = 0.0f;
-    unsigned char flags = 0; // bit0 active, bit1 latched, bit3 flick, bit4 armed
+// One recovered tick. Runs the sampler + the machine step.
+void Tick(float dt, const NativeMagnetism::FrameCVars& cvars,
+          bool manualInputHeld, bool chatFollow,
+          FootRoad::FootRoadProbe& outSample);
 
-    // Path history: {flag,time} records inside the SnapTime window.
-    static constexpr int kHistoryCapacity = 32;
-    unsigned char historyFlags[kHistoryCapacity] = {};
-    float historyTimes[kHistoryCapacity] = {};
-    int historyCount = 0;
-
-    // Backtrack history (pathB): road-point ids, capped at 10.
-    static constexpr int kPathCapacity = 10;
-    int pathB[kPathCapacity] = {};
-    int pathBCount = 0;
-
-    // Publish outputs (the native S_HorseData fields).
-    bool magnetismLive = false;
-    float magnetYaw = 0.0f; // the accepted road command (sample.yawFrom)
-
-    void Reset();
-};
-
-// Engage/disengage via the hold-E latch (the OnPress SetHoldLatched: the
-// latched bit; the gates decide acceptance).
-void SetHoldLatched(bool latched);
-
-// One recovered tick. Runs the native sampler with the native acquisition
-// radius (GetRoadDistance -> RoadMagnetismOnPressRoadDistOff/On),
-// the acceptance gates, the controller phases, the path history, and the
-// publish step. Returns the resulting latched state.
-//
-//  dt           frame delta (clamped by the caller)
-//  cvars        the native frame-helper cvars (enter/remain/snap/timers...)
-//  manualInput  Henry's WASD held (the foot equivalent of the rider stick)
-//  chatFollow   the chat-follow active gate
-//  outSample    the native sample (for diagnostics)
-State Tick(float dt, const NativeMagnetism::FrameCVars& cvars,
-           bool manualInput, bool chatFollow,
-           FootRoad::FootRoadProbe& outSample);
-
-// The recovered controller phases (0..5) shared with Tick.
-void ControllerTick(State& st, const FootRoad::FootRoadProbe& sample,
-                    int phase, float dt, const NativeMagnetism::FrameCVars& cvars);
-
-// The current ported state (for diagnostics/consumers).
-State GetState();
+// The current machine state.
+const State& GetState();
 
 } // namespace AutoWalk::RoadFollowPort

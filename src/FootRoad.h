@@ -32,6 +32,9 @@ struct FootRoadProbe {
     // Road segment endpoint positions (world).
     float fromX = 0.0f, fromY = 0.0f, fromZ = 0.0f;
     float toX = 0.0f, toY = 0.0f, toZ = 0.0f;
+    // Road-point ids (S_HorseRoadPoint.m_id) for the pathB history.
+    int fromId = -1;
+    int toId = -1;
 };
 
 // Runs the native horse road-sampling chain (wrapper REL::ID 194146 ->

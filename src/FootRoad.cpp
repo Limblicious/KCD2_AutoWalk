@@ -55,11 +55,13 @@ void CopySampleIntoProbe(const wh::entitymodule::S_HorseMagnetismSample& sample,
         out.fromX = sample.m_pFrom->m_pos.x;
         out.fromY = sample.m_pFrom->m_pos.y;
         out.fromZ = sample.m_pFrom->m_pos.z;
+        out.fromId = sample.m_pFrom->m_id;
     }
     if (sample.m_pTo) {
         out.toX = sample.m_pTo->m_pos.x;
         out.toY = sample.m_pTo->m_pos.y;
         out.toZ = sample.m_pTo->m_pos.z;
+        out.toId = sample.m_pTo->m_id;
     }
 }
 
