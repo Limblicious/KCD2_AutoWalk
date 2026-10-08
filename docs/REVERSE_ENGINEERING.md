@@ -466,6 +466,32 @@ the body along the flat yaw); release the counter on disengage. The camera
 override: m_desiredVelocity changes WHERE Henry moves; the flat-yaw hold
 changes WHERE HIS BODY FACES.
 
+### vf13 flat-yaw consumption (proof of the body-facing link, 2026-10-07)
+C_ActorMovementController::vf13 (0x1804B8E88) reads BOTH view and body state
+in its look-steer construction:
+
+- `FUN_180441b14` (the branch gate) is **the hold counter itself**:
+  `return *(int*)(actor+0x174) < 1`.
+- Branch A (counter HELD, cVar7 == 0): builds the look-turn from
+  state+0x14 (m_lookQuat — the view).
+- Branch B (counter clear + global byte DAT_18492da39 != 0): builds it from
+  state+0x34 (m_flatYawQuat) + state+0x40 (flat quat w).
+- Branch C (counter clear + velocity magnitude > eps + FUN_1804ace9c==0):
+  builds it from state+0x34 (m_flatYawQuat) + state+0x40, with the CD
+  turn-smoothing constants (0x18409EE60/0x18409EE64).
+- The branches write param_3[6]/param_3[8] = S_MountAnimState
+  m_deltaAngles x/z (the per-frame look-turn), and m_rootRotation
+  (out+0x3C) = the controller's internal body quat (controller+0x11C).
+
+Conclusion: m_flatYawQuat IS a movement-request reference on foot — the
+normal (counter-clear) path steers against the flat yaw, and the held path
+steers against the view. The inversion vs the initial hypothesis (held ->
+view-referenced, not flat-referenced) is the RAW observation; the exact
+activation semantics (global byte, FUN_1804ace9c) and the runtime behavior of
+a scoped hold + SetFlatYaw still require a live validation before
+implementation. Do not implement the hold+SetFlatYaw design until a runtime
+test confirms which state the body faces under the hold.
+
 ### Downstream actuator chain status (Gate A — incomplete by design)
 PushRiderAction (0x18059BC40) is fully decompiled: gate `*(sync+0x18)&1`
 && !skip; FUN_18059BBF8 converts {0,m_yawSmoothed} into the movement
