@@ -492,6 +492,27 @@ a scoped hold + SetFlatYaw still require a live validation before
 implementation. Do not implement the hold+SetFlatYaw design until a runtime
 test confirms which state the body faces under the hold.
 
+### Camera architecture consequence
+The mounted free-look mechanism is now identified as **C_FocusCamera ownership**,
+not merely "increment a hold counter":
+
+1. C_FocusCamera::Activate owns +0x174 via vf135.
+2. It captures the activation flat-view reference.
+3. Its tracker maintains a target frame (horse on the mounted rig).
+4. Update applies target-relative view rotation/limits through SetViewRotation.
+5. C_FocusCamera::Deactivate releases the hold and restores camera state.
+
+For the foot port, prefer reusing this native mechanism if a safe target provider
+can be supplied for Henry's independently controlled body frame. Do not manually
+toggle +0x174 and invent limit math until C_FocusCamera::ShouldBeActive and the
+target-provider requirements are fully recovered.
+
+Open questions before implementation:
+- can a provider with EntityId 0 / direct target frame remain active, or does
+  ShouldBeActive require a distinct target entity;
+- what exact limit pairs/mode/stiffness the mounted FocusCameraNode installs;
+- whether the mounted rig's setup can be cloned/adapted without a live horse.
+
 ### Hold-counter callers -- IDENTIFIED: C_FocusCamera (the mounted free-look)
 The player's vf135 (0x18040B580, the +0x174 hold) is held and released by the
 C_FocusCamera (C_Player+0xCF0, header game/C_FocusCamera.h):
@@ -566,9 +587,10 @@ Native dependencies enumerated from the recovered code:
 | chat-follow manager (C_Player+0xCE8) | engagement gate | USE Henry's real manager |
 
 Conclusion: run the native road sampler + read native cvars; port the
-controller/tick/state-machine logic faithfully in C++ (all branch-complete);
-apply the smoothed yaw through Henry's look accumulator. The native
-controller object itself is not required.
+controller/tick/state-machine logic faithfully in C++ (all branch-complete).
+Do NOT apply road steering through Henry's look accumulator: that is a view
+channel and is superseded by the recovered body/view ownership work below.
+The native controller object itself is not required.
 
 ## Evidence standard
 
