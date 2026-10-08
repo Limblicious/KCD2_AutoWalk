@@ -815,3 +815,87 @@ No more travel-frame code changes until both are known:
 2. the on-foot body-yaw ownership seam independent of view yaw.
 
 The current live test demonstrates that neither has been solved yet.
+
+
+---
+
+# Review of bb27564 — body/view seam recovery
+
+The new Ghidra work is materially useful, but one conclusion remains stronger
+than the evidence currently documented.
+
+## Proven
+
+The following is now supported:
+
+- SetViewRotation updates view yaw/pitch.
+- With either actor hold counter positive, SetViewRotation does not rebuild the
+  actor physics-state flat-yaw fields.
+- SetFlatYaw can update m_flatYawQuat/m_flatYaw while +0x174 prevents it from
+  rewriting the persistent view angles.
+- Therefore +0x174 + SetFlatYaw provides a real mechanism for changing the
+  actor physics-state flat yaw while leaving mouse-controlled view yaw alone.
+
+That is the first credible native seam for camera/body separation.
+
+## Not yet proven
+
+The docs currently call m_flatYaw "the body's facing reference" and state that:
+
+> the movement system faces the body along the flat yaw
+
+but the recorded evidence does not yet show the on-foot movement/animation
+controller consuming m_flatYaw/m_flatYawQuat to rotate Henry's physical body.
+
+C_ActorPhysicsState is itself documented upstream as the look/view state
+machine. A separate xref/dataflow proof is required before treating its flat
+yaw as the final body actuator.
+
+Required static check:
+
+- decompile C_ActorMovementController::vf13 (REL 28376 / 0x1804B8E88);
+- trace every read of the owner's flat-yaw state / GetViewRotation /
+  entity forward frame involved in constructing m_desiredVelocity and root/body
+  rotation;
+- trace consumers of S_MountAnimState::m_rootRotation and the actor's physical
+  orientation update;
+- identify the function that actually rotates Henry's entity/animated body.
+
+Only then decide whether SetFlatYaw is sufficient by itself or whether it is a
+reference frame used by another body-facing stage.
+
+## Documentation contradiction
+
+docs/REVERSE_ENGINEERING.md currently contains both:
+
+1. the new recommendation: hold +0x174 and drive SetFlatYaw(travelYaw), and
+2. the older "Foot-adapter seam" recommendation to add smoothed road yaw to
+   m_lookAngleAccum.
+
+These are different architectures. The latter is obsolete for the autonomous
+foot implementation and should not guide implementation work.
+
+m_lookAngleAccum is a VIEW additive channel; using it as the road steering
+actuator risks recoupling the camera to travel.
+
+## Path-follow status is still independent
+
+Even if the +0x174/SetFlatYaw seam proves correct, it fixes only body/view
+ownership. It does not fix the poor road following.
+
+The current runtime still does not execute/port the complete native
+S_HorseRoadFollow + S_AutoController state machine. Sampler-only yawFrom plus
+custom target/smoothing remains insufficient for curves, edges, forks, history,
+snap/backtrack, and native hysteresis.
+
+Therefore the next work should remain split into two explicit tracks:
+
+A. Body/view actuator proof:
+   prove how flat yaw reaches Henry's physical body, then implement the scoped
+   hold safely.
+
+B. Road-controller fidelity:
+   port the recovered native controller phases/path state around the native
+   sampler rather than continuing with yawFrom-only steering.
+
+Do not treat success in track A as evidence that track B is solved.
