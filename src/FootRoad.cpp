@@ -135,7 +135,20 @@ struct PersistentStandaloneFacade {
         auto* rf = reinterpret_cast<wh::entitymodule::S_HorseRoadFollow*>(&roadFollow);
 
         *reinterpret_cast<Offsets::IEntity**>(horse + 0x38) = playerEntity;
-        *reinterpret_cast<void**>(horse + 0x668) = roadCache;
+        // C_Horse+0x668 = C_Actor::m_pSoul (the current typed hierarchy):
+        // the road-record manager keys its records by the actor's soul
+        // (the sampler's lookup at 0x1807FE804 reads a sorted 0x38-record
+        // store through it). Point the facade at Henry's REAL soul so the
+        // lookup runs with the player's identity; the owned zeroed buffer
+        // remains only as the null fallback.
+        void* soul = nullptr;
+        if (auto* framework = CCryAction::GetInstance()) {
+            if (auto* actor = framework->GetClientActor()) {
+                soul = *reinterpret_cast<void**>(
+                    reinterpret_cast<std::uintptr_t>(actor) + 0x668);
+            }
+        }
+        *reinterpret_cast<void**>(horse + 0x668) = soul ? soul : roadCache;
         // C_Horse::m_pHorseData back-pointer (native helpers reach through it).
         *reinterpret_cast<wh::entitymodule::S_HorseData**>(horse + 0x9E8) = hd;
         rf->m_pHorseData = hd;

@@ -703,6 +703,22 @@ The second installer in the image = the combat lock path (sub_1808B8548).
 REMAINING Track A: the controller+0x11C -> m_rootRotation final body
 consumer (animated character / entity root orientation update).
 
+### Sampler facade field corrections (current typed hierarchy, 2026-10-07)
+- C_Horse+0x668 = C_Actor::m_pSoul (NOT a "road cache"): the sampler's
+  road-record lookup (0x1807FE804 -> 0x1807FE964) reads a sorted
+  0x38-record store through it (fields +0xC98/+0xCA0/+0xCA8) -- the
+  road-record manager keys the records by the actor's SOUL. The facade now
+  points +0x668 at Henry's real soul (with the owned zeroed buffer only as
+  the null fallback). The old "roadCache" naming was stale.
+- C_Horse+0x7A0 = C_BoneSlotSystem (0x1E0, embedded): the "road class"
+  reader (0x1808324C0) reads the int[4] at +0x188 = the bone-slot system's
+  m_indicesA (init -1; the facade's zeroed indices read as 0). The two RE
+  generations agree on the offsets; the semantic names differed.
+- The minimum valid facade state per the corrected hierarchy: the entity
+  (+0x38), the real soul (+0x668), the horse-data back-pointer (+0x9E8),
+  and the road-follow/horse-data internal links. The +0x7A0 bone-slot
+  region stays zeroed (indices 0 -- semantics unresolved upstream).
+
 ### vf13 call site confirmed (pre-physics update 0x181E7D6F0)
 - The movement controller = actor+0x180 (param_1[0x30]); the call is
   `(**(code**)(*(longlong*)param_1[0x30] + 0x68))(param_1[0x30], uVar9, &local_4f8)`
