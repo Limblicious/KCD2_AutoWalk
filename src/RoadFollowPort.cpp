@@ -82,7 +82,8 @@ void SetHoldLatched(bool latched)
     }
 }
 
-// The recovered acceptance gates (S_AutoController::SetHoldLatchedImpl
+// PARTIAL/UNWIRED: recovered acceptance-gate scaffold based on
+// S_AutoController::SetHoldLatchedImpl
 // 0x1829F1C70). Any failure rejects the latch. Gate order is the recovered
 // one; the horse-specific sub-gates are adapted to Henry:
 //   1. move adapter valid      -> the player exists (always true in Tick)
