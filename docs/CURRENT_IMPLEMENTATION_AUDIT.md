@@ -433,3 +433,171 @@ Until Gates A-C are resolved:
 - do not increase miss grace/sample distance by guesswork.
 
 These would mask the actual semantic bugs rather than fix them.
+
+
+---
+
+# Post-audit regression — commits a2f30dd / 975b112
+
+The workstation read the audit and then implemented a new travel-frame controller
+before completing **Gate A** (the downstream decompilation of the native steering
+command). This reintroduced guesswork in a different form.
+
+## Confirmed issue A — CryEngine forward-vector sign is wrong
+
+Current movement hook writes:
+
+```cpp
+out[3] =  sin(g_travelYaw) * speed;
+out[4] =  cos(g_travelYaw) * speed;
+```
+
+CryEngine defines local forward as `Vec3(0,1,0)`.
+
+The engine math/public libKCD2 code gives the yaw convention directly:
+
+```cpp
+Quat::GetRotZ() = atan2(-GetFwdX(), GetFwdY());
+```
+
+and BetterHorseHandling uses the same convention for horse yaw:
+
+```cpp
+horseYaw = atan2f(-tm->m01, tm->m11);
+```
+
+Therefore for a horizontal yaw `z`, the forward XY vector is:
+
+```text
+x = -sin(z)
+y =  cos(z)
+```
+
+not `(+sin(z), +cos(z))`.
+
+The current write mirrors travel across the world Y axis. At headings around
++/-90 degrees this sends Henry directly opposite the body's true forward axis,
+which is consistent with the reported "runs backwards" behavior.
+
+The current seed:
+
+```cpp
+atan2(tm[4], tm[5])
+```
+
+equals the correct planar yaw only for an ideal orthonormal yaw-only matrix
+because `m10 == -m01`. The authoritative engine expression is:
+
+```cpp
+atan2(-tm[1], tm[5])
+```
+
+(or derive the heading from Matrix34::GetColumn1).
+
+On slopes/with non-planar rotation, use the engine's forward column/reference,
+not the accidental m10 identity.
+
+## Confirmed issue B — a2f30dd again treats m_magnetYaw as absolute world heading
+
+The audit explicitly states that RE established:
+
+`m_magnetYaw` is a **yaw/steering command, not world heading**.
+
+Nevertheless a2f30dd now does:
+
+```cpp
+const float rawTarget = FootRoad::NativeMagnetYaw();
+...
+const float cmd = WrapPi(g_targetYaw - g_travelYaw);
+SmoothCD(..., cmd, ...);
+g_travelYaw += g_smoother.smoothed * sign;
+```
+
+That subtracts an absolute travel heading from a quantity already known **not**
+to be an absolute world heading.
+
+The commit comment also incorrectly renames m_magnetYaw as:
+
+> "the road direction at the nearest point"
+
+That contradicts the Ghidra findings already recorded in
+`docs/REVERSE_ENGINEERING.md`.
+
+This must be removed/reworked only after the exact downstream consumer of
+`{0,m_yawSmoothed}` is decompiled.
+
+## Unsupported issue C — integration units are guessed
+
+The new code performs:
+
+```cpp
+g_travelYaw += g_smoother.smoothed;
+```
+
+with no `dt`.
+
+Whether this is correct cannot be known until the downstream actuator is
+recovered. `m_yawSmoothed` could be a normalized steering input, angular
+rate, relative angular request, per-update delta, or another command.
+
+Do not infer the units from observed behavior.
+
+## Unsupported issue D — default sign inversion remains guessed
+
+Current code keeps:
+
+```cpp
+g_steerInvert = 1;
+sign = g_steerInvert ? -1.0f : 1.0f;
+```
+
+The sign must come from the recovered actuator path, not an inversion switch
+left over from prototype testing.
+
+## Prompt clarification
+
+The on-foot prompt appearing is **not evidence that vanilla mounted prompt
+logic somehow activates on foot**.
+
+This mod deliberately patches:
+
+- `Libs/Config/defaultProfile.xml` player action map with
+  `foot_magnetism_activate/deactivate`;
+- `Libs/Config/defaultActionHelp.xml` player help set with the Hold-E rows.
+
+Therefore the on-foot prompt is expected whenever the mod marks those rows
+visible. The disabled-action toast was an enabled/disable-reason state problem
+inside the mod's custom player rows.
+
+Do not spend RE time explaining why the prompt can render on foot; the repo
+itself installs it there.
+
+## Required next local action
+
+Do **not** patch the vector sign and resume tuning as the primary plan.
+
+The vector sign is a confirmed bug and should eventually be corrected, but the
+larger steering path remains semantically invalid.
+
+Connect GhidraMCP and finish Gate A:
+
+```text
+HorseYaw_SmoothCD
+  -> {0, m_yawSmoothed}
+  -> I_HorseRiderSync::PushRiderAction (slot 8 / 0x18059BC40)
+  -> C_RiderSync implementation/data writes
+  -> horse actor/movement request
+  -> actual horse flat/body yaw update
+```
+
+Recover:
+
+- exact meaning/units of each vector component;
+- sign;
+- whether dt is applied downstream;
+- any clamps/scales;
+- whether the command is a rate/input/delta;
+- how it combines with manual rider turn;
+- the exact final body/hull yaw actuator.
+
+Only after this is known should `g_travelYaw` integration be implemented.
