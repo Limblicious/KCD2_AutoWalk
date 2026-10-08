@@ -492,6 +492,36 @@ a scoped hold + SetFlatYaw still require a live validation before
 implementation. Do not implement the hold+SetFlatYaw design until a runtime
 test confirms which state the body faces under the hold.
 
+### Hold-counter callers -- IDENTIFIED: C_FocusCamera (the mounted free-look)
+The player's vf135 (0x18040B580, the +0x174 hold) is held and released by the
+C_FocusCamera (C_Player+0xCF0, header game/C_FocusCamera.h):
+
+- Activate (0x1808B9DB8): calls the player vtable slot 0x438 (= vf135) with
+  1 -- the hold INCREMENT -- for BOTH mode-0 and mode-2 setups. Mode-2 also
+  captures `m_capturedFlatView` (+0x58) = view-state +0x34/+0x3C (the
+  flat-yaw quat) at activation.
+- Deactivate (0x1808B8A04): calls vf135 with 0 -- the hold RELEASE -- for
+  mode-0 and mode-2, and restores the camera manager FOV-blend fields.
+- The tick (Update 0x1808BA014) pulls the view toward the target frame (the
+  horse, via the Apply step 0x1808B8BFC: view-state +0x24 quat rotated toward
+  the target Matrix34, step min(dt*100,1)/(stiffness+1), math 0x1808B8C5C)
+  and clamps TARGET-RELATIVE via SetViewRotation (0x1806440AC) -- the
+  horse-relative ViewLimit pinning. The mounted A/D follow itself is the
+  first-person compose's world-yaw mix, not this system.
+
+The mounted rig = a C_FocusCameraNode setup (entity-id provider
+sub_1827D7E80, target entity part/slot 9 = the horse). The mechanism:
+hold +0x174 (scoped free-look) + flat-view capture + target-relative limits
++ the view stays mouse-driven while the horse body turns through its own SM.
+
+### controller+0x11C (the body quat) -- partial
+vf13 writes controller+0x11C from a quat built by FUN_180949f28 (the
+turn-smoothed body quat) and copies it to S_MountAnimState::m_rootRotation
+(out+0x3C, the float-array copy at vf13 line 1921). The complete writer set
+and the final root-orientation consumer (animated character / entity root)
+remain to be enumerated (search_code paging); the copy into m_rootRotation
+is confirmed.
+
 ### Downstream actuator chain status (Gate A — incomplete by design)
 PushRiderAction (0x18059BC40) is fully decompiled: gate `*(sync+0x18)&1`
 && !skip; FUN_18059BBF8 converts {0,m_yawSmoothed} into the movement
