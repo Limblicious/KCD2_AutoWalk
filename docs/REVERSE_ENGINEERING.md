@@ -604,10 +604,29 @@ The tracker (C_FocusCamera+0x38) is filled on activation:
   (0x180A70610) from tuning +0x154.
 - Deactivate restores the FOV-blend fields from tuning +0x15C and releases
   the +0x174 hold (vf135(0)).
-- REMAINING: the mounted rig's installer call site (who installs the
-  C_FocusCameraNode setup targeting the horse) and the setup struct's
-  source values; plus the controller+0x11C -> m_rootRotation final body
-  consumer.
+### Mounted FocusCamera setup installer -- RECOVERED: C_FocusCameraNode
+The mounted rig is a `wh::animationmodule::C_FocusCameraNode` (the concept-
+graph node, vtable 0x183B75990; header animationmodule/C_FocusCameraNode.h),
+instantiated by the riding rig's animation asset graph targeting the HORSE.
+Its [43] InstallSetup (0x1827DBE94) builds an S_FocusCameraSetup and installs
+it on the local player's C_FocusCamera (client actor+0xCF0):
+- provider: the tag-9 WUID/entity-part provider (sub_1827D7E80, target
+  entity part/slot 9 = the horse) or the direct-object fallback
+  (sub_1827D7F28);
+- setup+0x04 = the mode byte (port +0x188); setup+0x05 = 1 (node-installed,
+  outranks the combat lock);
+- setup+0x18/+0x24 = the Vec2 angle-limit pairs (ports +0x108/+0xC8);
+- setup+0x30 = the stiffness (port +0x148);
+- the removal id stored at node+0x24C.
+The exact limit/stiffness/mode VALUES are asset-driven (the riding rig's
+animation graph), not code constants -- a foot adapter supplies its own via
+the same S_FocusCameraSetup + Install path, with a provider yielding
+Henry's autonomous travel frame (the zero-id provider skips the target
+rejection per ShouldBeActive).
+The second installer in the image = the combat lock path (sub_1808B8548).
+
+REMAINING Track A: the controller+0x11C -> m_rootRotation final body
+consumer (animated character / entity root orientation update).
 
 ### Downstream actuator chain status (Gate A — incomplete by design)
 PushRiderAction (0x18059BC40) is fully decompiled: gate `*(sync+0x18)&1`
