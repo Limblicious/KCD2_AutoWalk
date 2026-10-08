@@ -54,13 +54,14 @@ void MovementRequestHook(void* self, float dt, float* out)
         return;
     }
     // Keep the vanilla speed magnitude; replace only the horizontal
-    // direction with the autonomous travel heading (Cry yaw convention:
-    // forward = (sin yaw, cos yaw)).
+    // direction with the autonomous travel heading. CryEngine yaw
+    // convention (Quat::GetRotZ = atan2(-fwdX, fwdY)): forward = (-sin z,
+    // cos z).
     const float x = out[3];
     const float y = out[4];
     const float speed = std::sqrt(x * x + y * y);
     const float yaw = g_travelYaw;
-    out[3] = std::sin(yaw) * speed;
+    out[3] = -std::sin(yaw) * speed;
     out[4] = std::cos(yaw) * speed;
 }
 
@@ -547,7 +548,9 @@ void Tick()
             if (auto* entity = framework2 ? framework2->GetClientEntity() : nullptr) {
                 const auto* tm = reinterpret_cast<const float*>(
                     reinterpret_cast<std::uintptr_t>(entity) + 0x58);
-                bodyYaw = std::atan2(tm[4], tm[5]);
+                // Forward column (tm[4..6]); CryEngine yaw convention:
+                // GetRotZ = atan2(-fwdX, fwdY).
+                bodyYaw = std::atan2(-tm[4], tm[5]);
             }
             g_travelYaw = bodyYaw;
             g_travelValid = true;
