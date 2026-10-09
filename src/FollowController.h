@@ -22,9 +22,9 @@ void Reset();
 void RegisterPromptActions();
 void UpdatePromptFlags(bool onRoad, bool engaged, bool manualHeld);
 
-// Engagement callbacks wired to the native hold-E dispatch.
-void RequestEngage();
-void RequestDisengage();
+// Shared callback for both same-key prompt rows. Action-map rebuilds can
+// change which row owns E, so either row must resolve against current state.
+void RequestToggle();
 
 // One controller step; called from the plugin's recurring KCSE task.
 void Tick();

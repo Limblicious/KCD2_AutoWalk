@@ -259,7 +259,7 @@ void FollowTick()
 {
     AutoWalk::FollowController::Tick();
     // Re-enqueue forever; the tick is a no-op while disabled. Armed once per
-    // game load so a single chain keeps running.
+    // process so a single chain keeps running.
     if (KCSE::g_task) {
         KCSE::g_task->AddTask(&FollowTick);
     }
@@ -404,6 +404,9 @@ void OnMessage(KCSE::Message* message)
         AutoWalk::Log::Write("[AutoWalk] PreDataLoaded.");
         break;
     case KCSE::IMessagingInterface::kMessage_DataLoaded:
+        // Some startup paths do not deliver LoadGame. Tick is safe before a
+        // player exists, so arm it here and keep LoadGame for state reset.
+        ArmFollowTick();
         AutoWalk::FollowController::RegisterPromptActions();
         AutoWalk::Log::Write("[AutoWalk] DataLoaded.");
         break;

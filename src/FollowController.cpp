@@ -254,8 +254,7 @@ void ResetTravelFrame()
 }
 
 // User-input signals gathered by the input listener each frame.
-std::atomic<bool> g_engageRequested{false};
-std::atomic<bool> g_disengageRequested{false};
+std::atomic<bool> g_toggleRequested{false};
 std::atomic<bool> g_manualInput{false};
 
 // True while the current PostInputEvent call is our own synthetic W press.
@@ -591,6 +590,25 @@ wh::playermodule::I_ActionSets* GetActionSets()
         reinterpret_cast<std::uintptr_t>(playerModule) + 0x60);
 }
 
+void BindPromptActions(wh::playermodule::I_ActionSets* actionSets)
+{
+    if (!actionSets) {
+        return;
+    }
+
+    CryStringT<char> ctx("player");
+    CryStringT<char> activate("foot_magnetism_activate");
+    CryStringT<char> deactivate("foot_magnetism_deactivate");
+    const std::function<void()> toggle(
+        []() { FollowController::RequestToggle(); });
+
+    // These rows intentionally share E. Context changes such as combat can
+    // rebuild the active map with either row winning the same-key conflict,
+    // so both rows must perform the same state-aware operation.
+    actionSets->RegisterAction(ctx, activate, toggle, 1);
+    actionSets->RegisterAction(ctx, deactivate, toggle, 1);
+}
+
 } // namespace
 
 int g_steerInvert = 1;
@@ -615,12 +633,7 @@ void RegisterPromptActions()
     CryStringT<char> activate("foot_magnetism_activate");
     CryStringT<char> deactivate("foot_magnetism_deactivate");
 
-    actionSets->RegisterAction(
-        ctx, activate,
-        std::function<void()>([]() { FollowController::RequestEngage(); }), 1);
-    actionSets->RegisterAction(
-        ctx, deactivate,
-        std::function<void()>([]() { FollowController::RequestDisengage(); }), 1);
+    BindPromptActions(actionSets);
     const bool regA = actionSets->IsRegistered(ctx, activate);
     const bool regD = actionSets->IsRegistered(ctx, deactivate);
     Log::Write(std::string("[AutoWalk] FollowController: prompt actions registered (rows present: activate=") +
@@ -642,6 +655,9 @@ void UpdatePromptFlags(bool onRoad, bool engaged, bool manualHeld)
 
     static int lastShowA = -1;
     static int lastShowD = -1;
+    const bool promptBecameVisible =
+        (showActivate && lastShowA != 1) ||
+        (showDeactivate && lastShowD != 1);
     if (lastShowA != showActivate || lastShowD != showDeactivate) {
         lastShowA = showActivate;
         lastShowD = showDeactivate;
@@ -670,21 +686,26 @@ void UpdatePromptFlags(bool onRoad, bool engaged, bool manualHeld)
     // [5] visible state.
     actionSets->SetActionVisible(ctx, activate, showActivate, 1);
     actionSets->SetActionVisible(ctx, deactivate, showDeactivate, 1);
+
+    // Rebind after the visibility mutation when a row returns. RegisterAction
+    // is an idempotent overwrite in C_ActionSets and bindLive=1 repairs the
+    // active dispatch copy after action-map/context rebuilds.
+    if (promptBecameVisible) {
+        BindPromptActions(actionSets);
+    }
 }
 
-void RequestEngage()
+void RequestToggle()
 {
-    g_engageRequested.store(true);
-}
-
-void RequestDisengage()
-{
-    g_disengageRequested.store(true);
+    // Both same-key rows may dispatch in one input frame. A boolean collapses
+    // duplicate callbacks into one contextual operation on the next tick.
+    g_toggleRequested.store(true);
 }
 
 void Enable()
 {
     EnsureInputListener();
+    g_toggleRequested.store(false);
     g_phase.store(Phase::AwaitingRoad);
     g_smoother = {};
     g_targetYaw = 0.0f;
@@ -700,6 +721,7 @@ void Enable()
 
 void Disable()
 {
+    g_toggleRequested.store(false);
     ReleaseForward();
     RoadFollowPort::SetActionActive(false);
     ResetTravelFrame();
@@ -710,6 +732,7 @@ void Disable()
 
 void Reset()
 {
+    g_toggleRequested.store(false);
     ReleaseForward();
     g_rootMenuOpen.store(false);
     RoadFollowPort::SetActionActive(false);
@@ -778,21 +801,26 @@ void Tick()
                    std::to_string(FootRoad::NativeFollowReady()));
     }
 
-    // The hold-E actions drive the mode-1 machine's action-controlled
-    // engage bit (bit0); the machine runs the recovered OnPress flow.
-    const bool engage = g_engageRequested.exchange(false);
-    const bool disengage = g_disengageRequested.exchange(false);
-    if (engage) {
+    const bool manualHeld = IsManualHeld();
+
+    // The hold-E actions drive the mode-1 machine's action-controlled engage
+    // bit (bit0). Do not consume an activation while WASD still owns movement:
+    // asserting bit0 on that tick immediately arms the native interruption
+    // state, leaving later activation callbacks to reassert an already-set
+    // bit. Retain the completed hold request until the first neutral tick.
+    const bool latchedBeforeToggle = RoadFollowPort::GetState().latched;
+    if (g_toggleRequested.load() &&
+        (latchedBeforeToggle || !manualHeld) &&
+        g_toggleRequested.exchange(false)) {
+        if (latchedBeforeToggle) {
+            RoadFollowPort::SetActionActive(false);
+            Disable();
+            return;
+        }
         RoadFollowPort::SetActionActive(true);
         Log::Write("[AutoWalk] FollowController: engaged via hold E.");
     }
-    if (disengage) {
-        RoadFollowPort::SetActionActive(false);
-        Disable();
-        return;
-    }
 
-    const bool manualHeld = IsManualHeld();
     const bool chat = IsChatFollowActive();
 
     // The recovered mode-1 tick: the native sampler with the native
