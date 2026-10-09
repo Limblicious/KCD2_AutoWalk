@@ -339,17 +339,23 @@ void HoldForward()
 //   - C_UIFullUIModeHelper::OnSourceEvent = the full-UI mode (inventory,
 //     perks, map, quest log, alchemy, etc.) -- the game's source monitor
 //     broadcasts the active/inactive transitions to it.
+//   - C_UISkiptime::ShowDialog/HideDialog/RemoveDialog = the T wait screen.
 std::atomic<bool> g_rootMenuOpen{false};
 std::atomic<bool> g_fullUIModeActive{false};
+std::atomic<bool> g_skipTimeDialogOpen{false};
 bool g_menuHooksAttempted = false;
 bool g_menuHooksInstalled = false;
 
 using UIMenuOpenFn = void (*)(void* self, char mode);
 using UIMenuCloseFn = void (*)(void* self);
 using FullUIModeEventFn = void (*)(void* self, void* a2, bool bActive);
+using SkipTimeDialogFn = void (*)(void* self);
 UIMenuOpenFn g_originalUIMenuOpen = nullptr;
 UIMenuCloseFn g_originalUIMenuClose = nullptr;
 FullUIModeEventFn g_originalFullUIModeEvent = nullptr;
+SkipTimeDialogFn g_originalSkipTimeShowDialog = nullptr;
+SkipTimeDialogFn g_originalSkipTimeHideDialog = nullptr;
+SkipTimeDialogFn g_originalSkipTimeRemoveDialog = nullptr;
 
 void UIMenuOpenHook(void* self, char mode)
 {
@@ -387,6 +393,46 @@ void FullUIModeEventHook(void* self, void* a2, bool bActive)
     }
     if (g_originalFullUIModeEvent) {
         g_originalFullUIModeEvent(self, a2, bActive);
+    }
+}
+
+void SkipTimeShowDialogHook(void* self)
+{
+    // Release before SkipTime.gfx starts consuming keyboard input.
+    const bool wasOpen = g_skipTimeDialogOpen.exchange(true);
+    g_cameraRecenteringEnabled.store(false);
+    HorseCameraRecenter::Reset();
+    ReleaseForward();
+    g_lastTick = {};
+    if (!wasOpen) {
+        Log::Write("[AutoWalk] FollowController: skip-time dialog opened; released synthetic W.");
+    }
+    if (g_originalSkipTimeShowDialog) {
+        g_originalSkipTimeShowDialog(self);
+    }
+}
+
+void SkipTimeHideDialogHook(void* self)
+{
+    if (g_originalSkipTimeHideDialog) {
+        g_originalSkipTimeHideDialog(self);
+    }
+    const bool wasOpen = g_skipTimeDialogOpen.exchange(false);
+    g_lastTick = {};
+    if (wasOpen) {
+        Log::Write("[AutoWalk] FollowController: skip-time dialog closed.");
+    }
+}
+
+void SkipTimeRemoveDialogHook(void* self)
+{
+    if (g_originalSkipTimeRemoveDialog) {
+        g_originalSkipTimeRemoveDialog(self);
+    }
+    const bool wasOpen = g_skipTimeDialogOpen.exchange(false);
+    g_lastTick = {};
+    if (wasOpen) {
+        Log::Write("[AutoWalk] FollowController: skip-time dialog removed.");
     }
 }
 
@@ -454,8 +500,67 @@ void EnsureMenuHooks()
         }
     }
 
+    // The wait/time dialog is a standalone Flash screen and does not enter
+    // either root-menu or full-UI mode. These are the C_UISkiptime methods
+    // recovered in pinned libKCD2 for KCD2 1.5.6.
+    void* skipShowTarget = reinterpret_cast<void*>(moduleBase + 0xF49338);
+    void* skipHideTarget = reinterpret_cast<void*>(moduleBase + 0x19C339C);
+    void* skipRemoveTarget = reinterpret_cast<void*>(moduleBase + 0xB5CD84);
+    bool skipHooksReady = true;
+
+    const MH_STATUS skipShowCreate = MH_CreateHook(
+        skipShowTarget, reinterpret_cast<void*>(&SkipTimeShowDialogHook),
+        reinterpret_cast<void**>(&g_originalSkipTimeShowDialog));
+    if (skipShowCreate != MH_OK) {
+        skipHooksReady = false;
+        Log::Write(std::string("[AutoWalk] FollowController: skip-time show hook create failed (status=") +
+                   std::to_string(static_cast<int>(skipShowCreate)) + ").");
+    }
+
+    if (skipHooksReady) {
+        const MH_STATUS skipHideCreate = MH_CreateHook(
+            skipHideTarget, reinterpret_cast<void*>(&SkipTimeHideDialogHook),
+            reinterpret_cast<void**>(&g_originalSkipTimeHideDialog));
+        if (skipHideCreate != MH_OK) {
+            skipHooksReady = false;
+            MH_RemoveHook(skipShowTarget);
+            Log::Write(std::string("[AutoWalk] FollowController: skip-time hide hook create failed (status=") +
+                       std::to_string(static_cast<int>(skipHideCreate)) + ").");
+        }
+    }
+
+    if (skipHooksReady) {
+        const MH_STATUS skipRemoveCreate = MH_CreateHook(
+            skipRemoveTarget, reinterpret_cast<void*>(&SkipTimeRemoveDialogHook),
+            reinterpret_cast<void**>(&g_originalSkipTimeRemoveDialog));
+        if (skipRemoveCreate != MH_OK) {
+            skipHooksReady = false;
+            MH_RemoveHook(skipShowTarget);
+            MH_RemoveHook(skipHideTarget);
+            Log::Write(std::string("[AutoWalk] FollowController: skip-time remove hook create failed (status=") +
+                       std::to_string(static_cast<int>(skipRemoveCreate)) + ").");
+        }
+    }
+
+    if (skipHooksReady) {
+        const MH_STATUS showEnable = MH_EnableHook(skipShowTarget);
+        const MH_STATUS hideEnable = MH_EnableHook(skipHideTarget);
+        const MH_STATUS removeEnable = MH_EnableHook(skipRemoveTarget);
+        if (showEnable != MH_OK || hideEnable != MH_OK || removeEnable != MH_OK) {
+            skipHooksReady = false;
+            MH_DisableHook(skipShowTarget);
+            MH_DisableHook(skipHideTarget);
+            MH_DisableHook(skipRemoveTarget);
+            MH_RemoveHook(skipShowTarget);
+            MH_RemoveHook(skipHideTarget);
+            MH_RemoveHook(skipRemoveTarget);
+            Log::Write("[AutoWalk] FollowController: skip-time hooks could not be enabled.");
+        }
+    }
+
     g_menuHooksInstalled = true;
-    Log::Write("[AutoWalk] FollowController: UI lifecycle hooks installed (root menu + full-UI mode).");
+    Log::Write(std::string("[AutoWalk] FollowController: UI lifecycle hooks installed (root menu + full-UI mode") +
+               (skipHooksReady ? " + skip-time)." : "; skip-time unavailable)."));
 }
 
 class InputListener final : public Offsets::IInputEventListener {
@@ -735,6 +840,8 @@ void Reset()
     g_toggleRequested.store(false);
     ReleaseForward();
     g_rootMenuOpen.store(false);
+    g_fullUIModeActive.store(false);
+    g_skipTimeDialogOpen.store(false);
     RoadFollowPort::SetActionActive(false);
     ResetTravelFrame();
     g_phase.store(Phase::Disabled);
@@ -781,11 +888,12 @@ void Tick()
         return;
     }
 
-    // UI open (root menu or the full-UI mode): preserve the road-follow
+    // UI open (root menu, full-UI mode, or wait dialog): preserve the road-follow
     // state, but never keep our synthetic W held while the UI owns the
     // keyboard. No sampling, timers, prompt mutation, or travel-frame reset
     // occurs here.
-    if (g_rootMenuOpen.load() || g_fullUIModeActive.load()) {
+    if (g_rootMenuOpen.load() || g_fullUIModeActive.load() ||
+        g_skipTimeDialogOpen.load()) {
         g_cameraRecenteringEnabled.store(false);
         HorseCameraRecenter::Reset();
         ReleaseForward();
