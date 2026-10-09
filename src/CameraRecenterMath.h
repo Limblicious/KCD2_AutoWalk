@@ -72,4 +72,25 @@ inline bool InsideDeadZone(const Ang3& error, float zone)
            std::abs(error.z) < zone;
 }
 
+// Proportional pull velocity toward the target: fast initial swing,
+// decelerating approach (exponential), continuous curve tracking, and a
+// gentle dead-zone edge (velocity -> 0 at the boundary, so no stepping).
+// gain must stay below the road-follow smoother's rate so its compensation
+// can keep up with the pull (runtime-established stability constraint).
+inline float PullVelocity(float error, float gain, float maxRate,
+                          float deadZone)
+{
+    if (std::abs(error) < deadZone) {
+        return 0.0f;
+    }
+    const float v = error * gain;
+    if (v > maxRate) {
+        return maxRate;
+    }
+    if (v < -maxRate) {
+        return -maxRate;
+    }
+    return v;
+}
+
 } // namespace AutoWalk::HorseCameraRecenter

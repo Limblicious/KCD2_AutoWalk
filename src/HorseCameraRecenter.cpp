@@ -190,31 +190,31 @@ void Update(wh::entitymodule::C_Player* player, float dt,
     auto* state = player->m_pPhysicsState;
     const Quat current = state->m_viewRotation;
     const float pitch = cvars->cameraCenteringPitchOffset * kDegToRad;
-    const Quat desired = RecenterTarget(gt.flatYaw, gt.travelYaw, pitch);
 
-    // REL 56442 computes inverse(currentView) * slerp(currentView, target,
-    // blend), converts to Euler, and adds the result to the accumulator.
-    // The per-frame pull is capped at the native CameraCentering rate: the
-    // composed target can retreat with the view (flat yaw follows it), and
-    // an uncapped full-error pull stacks into a spin (runtime-observed).
-    Ang3 delta = RecenterDelta(current, desired, g_centerBlend);
-    delta = ClampDeltaStep(delta, centering * dt);
+    // Proportional pull: velocity = error * gain, capped. Fast initial swing
+    // with decelerating approach and continuous curve tracking (the native
+    // blend stage's constant-rate ramp is superseded; see REVERSE_ENGINEERING
+    // and the user-requested feel). gain/maxRate are fractions of the native
+    // road-follow smoother rate (rotationMax) so its compensation keeps up
+    // with the pull -- the runtime-established stability constraint.
+    const float gain = cvars->rotationMax * 0.6f;
+    const float maxRate = cvars->rotationMax * 0.4f;
+    const Ang3 curAngles = Ang3(current);
+    const float pullYaw = PullVelocity(
+        WrapPi(targetWorldYaw - curAngles.z), gain, maxRate,
+        0.75f * kDegToRad);
+    const float pullPitch = PullVelocity(
+        pitch - curAngles.x, gain, maxRate, 0.75f * kDegToRad);
 
-    // Small-error dead-zone: the coupled-frame limit cycle (camera bobble ->
-    // flat -> sampler normalization -> travel smoother -> target) sustains a
-    // couple-of-degrees oscillation; stop pulling inside the zone so the
-    // loop settles.
-    if (InsideDeadZone(RecenterDelta(current, desired, 1.0f),
-                       2.0f * kDegToRad)) {
+    if (pullYaw == 0.0f && pullPitch == 0.0f) {
         LogState("settled", lookPitch, lookYaw, g_centerBlend, focusFlags,
-                 centering, centeringTime, Ang3(current).z,
+                 centering, centeringTime, curAngles.z,
                  state->m_lookAngleAccum.z, targetWorldYaw, gt);
         return;
     }
 
-    state->m_lookAngleAccum += delta;
+    state->m_lookAngleAccum += Ang3(pullPitch * dt, 0.0f, pullYaw * dt);
 
-    const Ang3 curAngles = Ang3(current);
     LogState("apply", lookPitch, lookYaw, g_centerBlend, focusFlags,
              centering, centeringTime, curAngles.z,
              state->m_lookAngleAccum.z, targetWorldYaw, gt);

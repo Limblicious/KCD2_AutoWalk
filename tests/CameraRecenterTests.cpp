@@ -201,6 +201,38 @@ void TestDeadZone()
     CHECK(!InsideDeadZone(Ang3(2.1f * kDegToRad, 0.0f, 0.0f), zone));
 }
 
+// 14. Proportional pull: fast initial velocity, decelerating approach,
+//     capped, and zero inside the dead-zone with a gentle edge.
+void TestPullVelocity()
+{
+    constexpr float kDegToRad = 0.01745329252f;
+    const float gain = 3.0f;
+    const float maxRate = 2.0f;
+    const float deadZone = 0.75f * kDegToRad;
+
+    // Inside the dead-zone: no pull.
+    CHECK(PullVelocity(0.5f * kDegToRad, gain, maxRate, deadZone) == 0.0f);
+
+    // Proportional: velocity scales with the error (decelerating approach).
+    const float v1 = PullVelocity(20.0f * kDegToRad, gain, maxRate, deadZone);
+    const float v2 = PullVelocity(40.0f * kDegToRad, gain, maxRate, deadZone);
+    CHECK(v2 > v1);
+    CHECK(v1 > 0.0f);
+
+    // Capped at maxRate.
+    CHECK(std::abs(PullVelocity(2.0f, gain, maxRate, deadZone) - maxRate) <
+          1.0e-6f);
+    CHECK(std::abs(PullVelocity(-2.0f, gain, maxRate, deadZone) + maxRate) <
+          1.0e-6f);
+
+    // The boundary velocity is continuous: just outside the zone the pull
+    // is proportional and small, so curve tracking has no step.
+    const float justOutside =
+        PullVelocity(deadZone * 1.01f, gain, maxRate, deadZone);
+    CHECK(justOutside > 0.0f);
+    CHECK(justOutside < 0.1f);
+}
+
 } // namespace
 
 int main()
@@ -218,6 +250,7 @@ int main()
     TestWrapPi();
     TestDeltaStepClamp();
     TestDeadZone();
+    TestPullVelocity();
 
     std::printf("CameraRecenterTests: %d checks, %d failures\n", g_checks,
                 g_failures);

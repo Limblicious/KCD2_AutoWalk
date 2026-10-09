@@ -568,6 +568,17 @@ pipeline is **flat-yaw-relative**, not world-space:
   reset -> target bobble). The port skips the pull while the remaining error
   is below 2 deg (`InsideDeadZone`), letting the coupled loop settle. The
   native needs no zone because its target is view-independent.
+- **Proportional pull (2026-10-10, requested feel)**: the constant-rate cap
+  and the 2-deg dead-zone produced a slow linear swing and a visible step
+  when the target moved through curves. The pull is now a proportional
+  velocity controller (`PullVelocity`): `velocity = error * gain`, capped,
+  with a 0.75-deg dead-zone whose boundary velocity is continuous. gain and
+  the cap are fractions of the native road-follow smoother rate
+  (`rotationMax`), keeping the pull below the compensation rate (the
+  runtime-established stability constraint). This replaces the ported
+  blend-stage ramp: fast initial swing, decelerating exponential approach,
+  and continuous curve tracking. The blend/CameraCentering rate remain in
+  use for the restart delay only.
 
 #### Input-listener registration (2026-10-09 fix)
 `EnsureInputListener()` was previously reachable only through
