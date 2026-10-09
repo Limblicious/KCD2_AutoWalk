@@ -1,9 +1,11 @@
 #include "HorseCameraRecenter.h"
 
-#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <string>
 
+#include "CameraRecenterMath.h"
+#include "CameraRecenterTiming.h"
 #include "Log.h"
 #include "NativeMagnetism.h"
 #include "CryEngine/CryCommon/smartptr.h"
@@ -17,6 +19,8 @@ namespace {
 constexpr float kDegToRad = 0.01745329252f;
 float g_centerBlend = 0.0f;
 std::atomic<long long> g_lastLookMs{0};
+std::atomic<long long> g_lookEvents{0};
+std::atomic<bool> g_lookMonitoring{false};
 std::chrono::steady_clock::time_point g_lastLog{};
 
 long long NowMs()
@@ -30,7 +34,7 @@ long long NowMs()
 void LogState(std::string_view gate, float lookPitch, float lookYaw,
               float blend, uint32_t focusFlags, float travelYaw,
               float viewZ, float accumZ, float centering, float centeringTime,
-              float bodyYaw, float moveYaw, float cameraYaw)
+              float bodyYaw, float moveYaw, bool moveValid, float cameraYaw)
 {
     const auto now = std::chrono::steady_clock::now();
     if (g_lastLog != std::chrono::steady_clock::time_point{} &&
@@ -38,6 +42,7 @@ void LogState(std::string_view gate, float lookPitch, float lookYaw,
         return;
     }
     g_lastLog = now;
+    const std::string move = moveValid ? std::to_string(moveYaw) : "n/a";
     Log::Write(std::string("[AutoWalk] camera: gate=") + std::string(gate) +
                " lookPitch=" + std::to_string(lookPitch) +
                " lookYaw=" + std::to_string(lookYaw) +
@@ -47,11 +52,12 @@ void LogState(std::string_view gate, float lookPitch, float lookYaw,
                " centeringTime=" + std::to_string(centeringTime) +
                " sinceLookMs=" +
                std::to_string(NowMs() - g_lastLookMs.load()) +
+               " lookEvents=" + std::to_string(g_lookEvents.load()) +
                " travel=" + std::to_string(travelYaw) +
                " viewZ=" + std::to_string(viewZ) +
                " accumZ=" + std::to_string(accumZ) +
                " body=" + std::to_string(bodyYaw) +
-               " move=" + std::to_string(moveYaw) +
+               " move=" + move +
                " cam=" + std::to_string(cameraYaw));
 }
 
@@ -62,14 +68,20 @@ void Reset()
     g_centerBlend = 0.0f;
 }
 
+void SetLookMonitoring(bool active)
+{
+    g_lookMonitoring.store(active);
+}
+
 void NotifyMouseLook()
 {
     g_lastLookMs.store(NowMs());
+    g_lookEvents.fetch_add(1);
 }
 
 void Update(wh::entitymodule::C_Player* player, float travelYaw, float dt,
             float lookPitch, float lookYaw,
-            float bodyYaw, float moveYaw, float cameraYaw)
+            float bodyYaw, float moveYaw, bool moveValid, float cameraYaw)
 {
     const NativeMagnetism::FrameCVars* cvars = nullptr;
     const bool cvarsOk = NativeMagnetism::RefreshFrameCVars(cvars) && cvars;
@@ -83,7 +95,17 @@ void Update(wh::entitymodule::C_Player* player, float travelYaw, float dt,
     if (!player || !player->m_pPhysicsState || !cvarsOk || centering < 0.0f) {
         LogState("cvars", lookPitch, lookYaw, g_centerBlend, focusFlags,
                  travelYaw, 0.0f, 0.0f, centering, centeringTime,
-                 bodyYaw, moveYaw, cameraYaw);
+                 bodyYaw, moveYaw, moveValid, cameraYaw);
+        Reset();
+        return;
+    }
+
+    // Fail-closed: without a registered look-input monitor the recenter
+    // could never be interrupted by the player.
+    if (!g_lookMonitoring.load()) {
+        LogState("monitor", lookPitch, lookYaw, g_centerBlend, focusFlags,
+                 travelYaw, 0.0f, 0.0f, centering, centeringTime,
+                 bodyYaw, moveYaw, moveValid, cameraYaw);
         Reset();
         return;
     }
@@ -92,7 +114,7 @@ void Update(wh::entitymodule::C_Player* player, float travelYaw, float dt,
     if (player->m_pFocusCamera && (focusFlags & 0x02U) != 0) {
         LogState("focus", lookPitch, lookYaw, g_centerBlend, focusFlags,
                  travelYaw, 0.0f, 0.0f, centering, centeringTime,
-                 bodyYaw, moveYaw, cameraYaw);
+                 bodyYaw, moveYaw, moveValid, cameraYaw);
         Reset();
         return;
     }
@@ -101,42 +123,30 @@ void Update(wh::entitymodule::C_Player* player, float travelYaw, float dt,
     // frame and stays idle for CameraCenteringTime before pulling. On foot,
     // the look input is recorded by NotifyMouseLook; the movement request's
     // computed turn terms are NOT user input and are ignored here.
-    const long long sinceLookMs = NowMs() - g_lastLookMs.load();
-    if (centeringTime > 0.0f &&
-        sinceLookMs < static_cast<long long>(centeringTime * 1000.0f)) {
-        g_centerBlend = 0.0f;
+    const float sinceLookSec =
+        static_cast<float>(NowMs() - g_lastLookMs.load()) / 1000.0f;
+    if (!StepTiming(centering, centeringTime, sinceLookSec, dt,
+                    g_centerBlend)) {
         LogState("delay", lookPitch, lookYaw, g_centerBlend, focusFlags,
                  travelYaw, 0.0f, 0.0f, centering, centeringTime,
-                 bodyYaw, moveYaw, cameraYaw);
+                 bodyYaw, moveYaw, moveValid, cameraYaw);
         return;
     }
 
     auto* state = player->m_pPhysicsState;
     const Quat current = state->m_viewRotation;
     const float pitch = cvars->cameraCenteringPitchOffset * kDegToRad;
-
-    // Native target construction is entityRotation * relativeYaw *
-    // pitchOffset. The foot adapter's autonomous travel frame replaces the
-    // horse entity yaw; no additional road-yaw term is needed.
-    const Quat desired = Quat::CreateRotationZ(travelYaw) *
-                         Quat::CreateRotationX(pitch);
-
-    g_centerBlend = std::min(1.0f,
-                             g_centerBlend + cvars->cameraCentering * dt);
-    Quat target = desired;
-    if (g_centerBlend < 1.0f) {
-        target.SetSlerp(current, desired, g_centerBlend);
-    }
+    const Quat desired = RecenterTarget(travelYaw, pitch);
 
     // REL 56442 computes inverse(currentView) * slerp(currentView, target,
     // blend), converts to Euler, and adds all three components to the
     // accumulator consumed and cleared by the actor physics tick.
-    state->m_lookAngleAccum += Ang3((!current) * target);
+    state->m_lookAngleAccum += RecenterDelta(current, desired, g_centerBlend);
 
     const Ang3 curAngles = Ang3(current);
     LogState("apply", lookPitch, lookYaw, g_centerBlend, focusFlags,
              travelYaw, curAngles.z, state->m_lookAngleAccum.z, centering,
-             centeringTime, bodyYaw, moveYaw, cameraYaw);
+             centeringTime, bodyYaw, moveYaw, moveValid, cameraYaw);
 }
 
 } // namespace AutoWalk::HorseCameraRecenter

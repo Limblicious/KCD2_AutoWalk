@@ -76,3 +76,16 @@ add_executable(RoadFollowMachineTests
 target_include_directories(RoadFollowMachineTests PRIVATE "${CMAKE_SOURCE_DIR}/src")
 target_compile_options(RoadFollowMachineTests PRIVATE /utf-8)
 add_test(NAME RoadFollowMachineTests COMMAND RoadFollowMachineTests)
+
+# Deterministic tests for the camera recenter timing/target math. Header-only
+# game-independent logic shared with the runtime module.
+add_executable(CameraRecenterTests
+    tests/CameraRecenterTests.cpp
+    tests/CryTestStubs.cpp
+    src/CryAssertStubs.cpp)
+target_include_directories(CameraRecenterTests PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+    "${LIBKCD2_ROOT}/include"
+    "${LIBKCD2_ROOT}/include/CryEngine/CryCommon")
+target_compile_options(CameraRecenterTests PRIVATE /utf-8)
+add_test(NAME CameraRecenterTests COMMAND CameraRecenterTests)

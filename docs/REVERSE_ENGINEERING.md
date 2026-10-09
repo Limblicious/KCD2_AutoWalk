@@ -489,6 +489,51 @@ Allocates 0x30 and calls S_OnPressController_Ctor(obj, S_HorseData*, moveAdapter
   focus/limit lifecycle is orthogonal and the mounted routine explicitly
   yields to it.
 
+#### Native target-term accounting (foot port, 2026-10-09)
+Every term of the native centered-target construction, and how the foot port
+handles it:
+
+| Native term | Native source | Foot handling | Status |
+|---|---|---|---|
+| Absolute body frame | horse entity rotation (`S_HorseData+0xF8 -> vf0x180`) | `g_travelYaw` (the autonomous travel frame) | REPLACED — **equivalence with Henry's physical travel is UNVERIFIED**; pending the ground-truth `body/move/cam` comparison |
+| Relative yaw | mounted rig relative angle | omitted (rig-specific, no on-foot analog) | OMITTED |
+| Road-magnetism yaw | `RoadState_GetIndex` vs `param_3[0x24]` + `MagnetismDegreeLimit` clamp | omitted: the road-follow yaw already enters through `g_travelYaw` (which chases the native road sampler output); a separate magnetism-yaw term would double-count | OMITTED (documented rationale) |
+| Heading SmoothCD | state `+0x918/+0x91C` chasing `FUN_180a50dcc` (degrees) | omitted: that smoothing feeds the native pitch composition (`pitchOffset + smoothed`); on foot there is no recovered analog source | OMITTED — native parity claim does NOT include this term |
+| Pitch | `CameraCenteringPitchOffset` (+0x110) | ported verbatim | PORTED |
+| Restart delay | `CameraCenteringTime` (+0x104) / `CameraCenteringTimeInCombat` (+0x108) | normal +0x104 only; combat variant not selected on foot | PARTIAL |
+| Blend rate | `CameraCentering` (+0x100) | ported verbatim | PORTED |
+| Blend curve | `inverse(currentView) * slerp(currentView, target, blend)` | ported verbatim (`CameraRecenterMath.h`) | PORTED |
+| Output channel | `C_ActorPhysicsState::m_lookAngleAccum` (all 3 Euler components) | ported verbatim | PORTED |
+| FocusCamera ownership | yield while `FocusCamera flags & 2` | ported | PORTED |
+| Look-input reset | every frame with `m_look.x/.z != 0` calls the reset helper `0x180A51058` | foot gate is the look-axis EVENT stream (`NotifyMouseLook`), not the processed look vector — raw mouse/XI events are the closest on-foot analog of the mounted look vector; event-shape verification is in the runtime log (`input: look event received`) | ADAPTED — event mapping pending runtime confirmation |
+
+Honest parity statement: the target frame (travelYaw) substitution and the
+raw-event interruption gate are the two adaptation points that remain
+runtime-unverified; the blend/delay/delta/output math is a verbatim port.
+
+#### Timer lifecycle (foot port vs the native reset helper)
+- Native: the reset helper `0x180A51058` runs on every look-input frame and
+  on the disallowed path; its exact field writes (whether it re-stamps the
+  `+0x914` timer) were established from the caller flow, not from a
+  branch-complete decompile of the helper body.
+- Foot port: `NotifyMouseLook` re-stamps `g_lastLookMs` (the look-event
+  analog); `Reset()` clears only the blend and does NOT re-stamp, matching
+  the verified caller flow (the helper is invoked on look frames, not on
+  arbitrary state resets). UI-open/disengage are foot-specific resets with
+  no native stamping analog.
+- Unresolved until `0x180A51058` is decompiled: whether an
+  engagement/menu-close reset should also restart the delay. Current choice
+  (no stamp) is the conservative reading of the verified flow.
+
+#### Input-listener registration (2026-10-09 fix)
+`EnsureInputListener()` was previously reachable only through
+`FollowController::Enable()` (the console command); normal hold-E play never
+registered the look-input monitor, so the recenter could never be
+interrupted. It is now ensured at the top of every `Tick()` with
+once-only registration, per-tick retry until the input system is available,
+rate-limited failure logging, and a fail-closed gate: while the monitor is
+unregistered the recenter never applies the view pull.
+
 ## View/body separation seam (recovered — the body-facing mechanism)
 
 The player's C_ActorPhysicsState keeps the VIEW and the BODY flat yaw as

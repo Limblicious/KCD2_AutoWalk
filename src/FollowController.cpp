@@ -104,6 +104,7 @@ void MovementRequestHook(void* self, float dt, float* out)
         // and the displayed camera orientation.
         float bodyYaw = yaw;
         float moveYaw = yaw;
+        bool moveValid = false;
         auto* framework = CCryAction::GetInstance();
         if (auto* entity = framework ? framework->GetClientEntity() : nullptr) {
             const auto* tm = reinterpret_cast<const float*>(
@@ -115,8 +116,12 @@ void MovementRequestHook(void* self, float dt, float* out)
             if (g_lastPosValid) {
                 const float dx = px - g_lastPosX;
                 const float dy = py - g_lastPosY;
-                if (dx * dx + dy * dy > 1.0e-6f) {
+                const float distSq = dx * dx + dy * dy;
+                // A frame step below the noise floor cannot be measured;
+                // a step above 3 m is a teleport/load, not travel.
+                if (distSq > 1.0e-6f && distSq < 9.0f) {
                     moveYaw = std::atan2(-dx, dy);
+                    moveValid = true;
                 }
             }
             g_lastPosX = px;
@@ -128,7 +133,8 @@ void MovementRequestHook(void* self, float dt, float* out)
         // C_ActorPhysicsState::m_lookDeltaRequest by the immediately
         // following native physics-state tick.
         HorseCameraRecenter::Update(player, yaw, dt, out[6], out[8],
-                                    bodyYaw, moveYaw, ReadCameraYaw());
+                                    bodyYaw, moveYaw, moveValid,
+                                    ReadCameraYaw());
     }
     // NOTE: m_rootRotation (out+0x3C) is NOT overwritten here -- its exact
     // role is still "MED"-unverified (quat vs look/aim data), and writing it
@@ -201,6 +207,10 @@ void ResetTravelFrame()
     g_travelValid = false;
     g_targetValid = false;
     g_smoother = {};
+    // The position history is only valid within one continuous follow
+    // session; stale deltas across a teleport/load would otherwise be
+    // reported as travel.
+    g_lastPosValid = false;
 }
 
 // User-input signals gathered by the input listener each frame.
@@ -441,6 +451,17 @@ public:
         if (lookAxis) {
             if (event.value != 0.0f) {
                 HorseCameraRecenter::NotifyMouseLook();
+                // Proof of reception: log the first two look events with
+                // their device/key so the mapping is visible in the log.
+                static int proofLogged = 0;
+                if (proofLogged < 2) {
+                    ++proofLogged;
+                    Log::Write(std::string("[AutoWalk] input: look event "
+                                           "received dev=") +
+                               std::to_string(static_cast<int>(event.deviceId)) +
+                               " key=" + std::to_string(event.keyId) +
+                               " value=" + std::to_string(event.value));
+                }
             }
             return false;
         }
@@ -482,15 +503,36 @@ public:
 InputListener s_inputListener;
 bool s_listenerRegistered = false;
 
+void LogListenerFailure()
+{
+    static std::chrono::steady_clock::time_point last{};
+    const auto now = std::chrono::steady_clock::now();
+    if (last == std::chrono::steady_clock::time_point{} ||
+        now - last >= std::chrono::seconds(5)) {
+        last = now;
+        Log::Write("[AutoWalk] FollowController: input listener NOT "
+                   "registered; camera recentering stays disabled "
+                   "(fail-closed).");
+    }
+}
+
 void EnsureInputListener()
 {
     if (s_listenerRegistered) {
         return;
     }
     auto* env = SSystemGlobalEnvironment::GetInstance();
-    if (env && env->pInput && env->pInput->AddEventListener(&s_inputListener)) {
+    if (!env || !env->pInput) {
+        LogListenerFailure();
+        return;
+    }
+    if (env->pInput->AddEventListener(&s_inputListener)) {
         s_listenerRegistered = true;
-        Log::Write("[AutoWalk] FollowController: input listener registered.");
+        HorseCameraRecenter::SetLookMonitoring(true);
+        Log::Write("[AutoWalk] FollowController: input listener registered "
+                   "(look monitoring ON).");
+    } else {
+        LogListenerFailure();
     }
 }
 
@@ -611,6 +653,7 @@ void Enable()
     g_followActive.store(false);
     g_cameraRecenteringEnabled.store(false);
     HorseCameraRecenter::Reset();
+    g_lastPosValid = false;
     RoadFollowPort::SetActionActive(true);
     Log::Write("[AutoWalk] FollowController: enabled (mode-1 engage).");
 }
@@ -637,6 +680,10 @@ void Reset()
 void Tick()
 {
     EnsureMenuHooks();
+    // The listener must be registered during normal hold-E play, not only
+    // via the console Enable(): it is the look-input monitor the camera
+    // recenter fails closed without.
+    EnsureInputListener();
 
     auto* framework = CCryAction::GetInstance();
     auto* player = framework
