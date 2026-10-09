@@ -4,10 +4,14 @@
 // (docs/CURRENT_IMPLEMENTATION_AUDIT.md, "Required deterministic tests").
 
 #include "../src/RoadFollowMachine.h"
+#include "../src/FollowInteractionState.h"
 
 #include <cstdio>
 
 using namespace AutoWalk::RoadFollowPort;
+using AutoWalk::FollowInteraction::ToggleBlocker;
+using AutoWalk::FollowInteraction::ToggleRequest;
+using AutoWalk::FollowInteraction::ToggleResolution;
 
 namespace {
 
@@ -306,6 +310,127 @@ void TestNoContradictions()
     }
 }
 
+// 13. an activation completed during manual movement is consumed and rejected,
+//     never retained until movement later becomes neutral.
+void TestManualActivationIsNotDeferred()
+{
+    ToggleRequest request;
+    request.Unblock(ToggleBlocker::Context);
+    request.Request();
+    CHECK(request.IsPending());
+    CHECK(request.Consume(false, true, true) == ToggleResolution::Cancelled);
+    CHECK(!request.IsPending());
+    CHECK(request.Consume(false, false, true) == ToggleResolution::None);
+}
+
+// 14. menu/context cancellation and invalid action state both discard the
+//     completed hold without producing a later operation.
+void TestToggleCancellation()
+{
+    ToggleRequest request;
+    request.Unblock(ToggleBlocker::Context);
+    request.Request();
+    request.Cancel();
+    CHECK(request.Consume(false, false, true) == ToggleResolution::None);
+
+    request.Request();
+    CHECK(request.Consume(false, false, false) == ToggleResolution::Cancelled);
+    CHECK(!request.IsPending());
+
+    request.Block(ToggleBlocker::RootMenu);
+    request.Request();
+    request.Unblock(ToggleBlocker::RootMenu);
+    CHECK(request.Consume(false, false, true) == ToggleResolution::None);
+
+    request.Request();
+    request.Block(ToggleBlocker::RootMenu);
+    request.Request();
+    request.Unblock(ToggleBlocker::RootMenu);
+    CHECK(request.Consume(false, false, true) == ToggleResolution::None);
+
+    request.Block(ToggleBlocker::RootMenu);
+    request.Block(ToggleBlocker::FullUI);
+    request.Unblock(ToggleBlocker::RootMenu);
+    request.Request();
+    CHECK(request.IsBlocked());
+    CHECK(request.Consume(false, false, true) == ToggleResolution::None);
+    request.Unblock(ToggleBlocker::FullUI);
+    CHECK(!request.IsBlocked());
+}
+
+// 15. callbacks from both same-key rows collapse into one operation.
+void TestDuplicateToggleCallbacksCollapse()
+{
+    ToggleRequest request;
+    request.Unblock(ToggleBlocker::Context);
+    request.Request();
+    request.Request();
+    CHECK(request.Consume(false, false, true) == ToggleResolution::Engage);
+    CHECK(request.Consume(false, false, true) == ToggleResolution::None);
+}
+
+// 16. a valid request engages the road machine on a hit.
+void TestToggleEngagesMachine()
+{
+    State st;
+    ToggleRequest request;
+    request.Unblock(ToggleBlocker::Context);
+    request.Request();
+    const auto result = request.Consume(st.latched, false, true);
+    CHECK(result == ToggleResolution::Engage);
+    if (result == ToggleResolution::Engage) {
+        SetActionActive(st, true);
+    }
+    StepState(st, HitSample(), DefaultCvars(), kDt, false, false, false);
+    CHECK(st.latched);
+    CHECK((st.flags & kBitActive) != 0);
+}
+
+// 17. a contextual toggle while latched remains a disengagement even if
+//     manual movement is currently authoritative.
+void TestToggleDisengagesMachine()
+{
+    State st;
+    SetActionActive(st, true);
+    StepState(st, HitSample(), DefaultCvars(), kDt, false, false, false);
+    CHECK(st.latched);
+
+    ToggleRequest request;
+    request.Unblock(ToggleBlocker::Context);
+    request.Request();
+    const auto result = request.Consume(st.latched, true, true);
+    CHECK(result == ToggleResolution::Disengage);
+    if (result == ToggleResolution::Disengage) {
+        SetActionActive(st, false);
+    }
+    StepState(st, HitSample(), DefaultCvars(), kDt, false, false, false);
+    CHECK(!st.latched);
+    CHECK((st.flags & kBitActive) == 0);
+}
+
+// 18. physical W takes ownership of the shared engine symbol before the
+//     plugin releases its synthetic hold.
+void TestManualWOwnershipResolution()
+{
+    using AutoWalk::FollowInteraction::ResolveManualW;
+
+    const auto syntheticOnly = ResolveManualW(true, true, false);
+    CHECK(!syntheticOnly.manualHeld);
+    CHECK(syntheticOnly.releaseSynthetic);
+
+    const auto physicalDuringSynthetic = ResolveManualW(true, true, true);
+    CHECK(physicalDuringSynthetic.manualHeld);
+    CHECK(!physicalDuringSynthetic.releaseSynthetic);
+
+    const auto transferredToPhysical = ResolveManualW(false, true, true);
+    CHECK(transferredToPhysical.manualHeld);
+    CHECK(!transferredToPhysical.releaseSynthetic);
+
+    const auto idle = ResolveManualW(false, false, false);
+    CHECK(!idle.manualHeld);
+    CHECK(!idle.releaseSynthetic);
+}
+
 } // namespace
 
 int main()
@@ -322,6 +447,12 @@ int main()
     TestPathBRolling();
     TestPublish();
     TestNoContradictions();
+    TestManualActivationIsNotDeferred();
+    TestToggleCancellation();
+    TestDuplicateToggleCallbacksCollapse();
+    TestToggleEngagesMachine();
+    TestToggleDisengagesMachine();
+    TestManualWOwnershipResolution();
 
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

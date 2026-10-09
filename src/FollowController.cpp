@@ -8,6 +8,7 @@
 #include <MinHook.h>
 
 #include "FootRoad.h"
+#include "FollowInteractionState.h"
 #include "HorseCameraRecenter.h"
 #include "InputSeam.h"
 #include "Log.h"
@@ -253,12 +254,7 @@ void ResetTravelFrame()
     ResetPositionHistory();
 }
 
-// User-input signals gathered by the input listener each frame.
-std::atomic<bool> g_toggleRequested{false};
-std::atomic<bool> g_manualInput{false};
-
-// True while the current PostInputEvent call is our own synthetic W press.
-std::atomic<bool> g_syntheticPressInFlight{false};
+FollowInteraction::ToggleRequest g_toggleRequest;
 
 float WrapPi(float a)
 {
@@ -267,15 +263,21 @@ float WrapPi(float a)
     return a;
 }
 
-// User-held W tracking: the listener sees fresh (untagged) W presses and
-// releases; the synthetic hold is tagged and ignored.
-std::atomic<bool> g_userWHeld{false};
+bool IsPhysicalWDown()
+{
+    // Engine-synthesized input does not affect the OS key state, so this
+    // remains unambiguous while synthetic W owns the engine's held queue.
+    return (GetAsyncKeyState('W') & 0x8000) != 0;
+}
 
 bool IsManualHeld()
 {
+    const auto w = FollowInteraction::ResolveManualW(
+        g_wHeld, InputSeam::IsKeyHeld(Offsets::eKI_W), IsPhysicalWDown());
+
     // Never synthesized by the plugin: a held A/S/D in the input queue is
-    // always the player. W is tracked through the listener above.
-    return g_userWHeld.load() ||
+    // always the player.
+    return w.manualHeld ||
            InputSeam::IsKeyHeld(Offsets::eKI_A) ||
            InputSeam::IsKeyHeld(Offsets::eKI_S) ||
            InputSeam::IsKeyHeld(Offsets::eKI_D);
@@ -316,7 +318,9 @@ bool IsMounted()
 
 void ReleaseForward()
 {
-    if (g_wHeld && InputSeam::IsKeyHeld(Offsets::eKI_W)) {
+    const auto w = FollowInteraction::ResolveManualW(
+        g_wHeld, InputSeam::IsKeyHeld(Offsets::eKI_W), IsPhysicalWDown());
+    if (w.releaseSynthetic) {
         InputSeam::PostKeyEvent(Offsets::eKI_W, Offsets::eIS_Released, 0.0f);
     }
     g_wHeld = false;
@@ -325,9 +329,7 @@ void ReleaseForward()
 void HoldForward()
 {
     if (!InputSeam::IsKeyHeld(Offsets::eKI_W)) {
-        g_syntheticPressInFlight.store(true);
         InputSeam::PostKeyEvent(Offsets::eKI_W, Offsets::eIS_Pressed, 1.0f);
-        g_syntheticPressInFlight.store(false);
     }
     g_wHeld = true;
 }
@@ -346,6 +348,12 @@ std::atomic<bool> g_skipTimeDialogOpen{false};
 bool g_menuHooksAttempted = false;
 bool g_menuHooksInstalled = false;
 
+bool IsInputOwningUIOpen()
+{
+    return g_rootMenuOpen.load() || g_fullUIModeActive.load() ||
+           g_skipTimeDialogOpen.load();
+}
+
 using UIMenuOpenFn = void (*)(void* self, char mode);
 using UIMenuCloseFn = void (*)(void* self);
 using FullUIModeEventFn = void (*)(void* self, void* a2, bool bActive);
@@ -361,6 +369,7 @@ void UIMenuOpenHook(void* self, char mode)
 {
     // Release before the menu begins consuming keyboard input so our synthetic
     // W cannot become a held navigation key.
+    g_toggleRequest.Block(FollowInteraction::ToggleBlocker::RootMenu);
     g_rootMenuOpen.store(true);
     g_cameraRecenteringEnabled.store(false);
     HorseCameraRecenter::Reset();
@@ -379,6 +388,7 @@ void UIMenuCloseHook(void* self)
     // Do not synthesize W from the UI hook. The normal follow tick will resume
     // it on the next frame if the mode-1 road latch is still active.
     g_rootMenuOpen.store(false);
+    g_toggleRequest.Unblock(FollowInteraction::ToggleBlocker::RootMenu);
     g_lastTick = {};
 }
 
@@ -386,6 +396,7 @@ void FullUIModeEventHook(void* self, void* a2, bool bActive)
 {
     g_fullUIModeActive.store(bActive);
     if (bActive) {
+        g_toggleRequest.Block(FollowInteraction::ToggleBlocker::FullUI);
         g_cameraRecenteringEnabled.store(false);
         HorseCameraRecenter::Reset();
         ReleaseForward();
@@ -394,11 +405,15 @@ void FullUIModeEventHook(void* self, void* a2, bool bActive)
     if (g_originalFullUIModeEvent) {
         g_originalFullUIModeEvent(self, a2, bActive);
     }
+    if (!bActive) {
+        g_toggleRequest.Unblock(FollowInteraction::ToggleBlocker::FullUI);
+    }
 }
 
 void SkipTimeShowDialogHook(void* self)
 {
     // Release before SkipTime.gfx starts consuming keyboard input.
+    g_toggleRequest.Block(FollowInteraction::ToggleBlocker::SkipTime);
     const bool wasOpen = g_skipTimeDialogOpen.exchange(true);
     g_cameraRecenteringEnabled.store(false);
     HorseCameraRecenter::Reset();
@@ -418,6 +433,7 @@ void SkipTimeHideDialogHook(void* self)
         g_originalSkipTimeHideDialog(self);
     }
     const bool wasOpen = g_skipTimeDialogOpen.exchange(false);
+    g_toggleRequest.Unblock(FollowInteraction::ToggleBlocker::SkipTime);
     g_lastTick = {};
     if (wasOpen) {
         Log::Write("[AutoWalk] FollowController: skip-time dialog closed.");
@@ -430,6 +446,7 @@ void SkipTimeRemoveDialogHook(void* self)
         g_originalSkipTimeRemoveDialog(self);
     }
     const bool wasOpen = g_skipTimeDialogOpen.exchange(false);
+    g_toggleRequest.Unblock(FollowInteraction::ToggleBlocker::SkipTime);
     g_lastTick = {};
     if (wasOpen) {
         Log::Write("[AutoWalk] FollowController: skip-time dialog removed.");
@@ -609,33 +626,6 @@ public:
             }
             return false;
         }
-        if (event.deviceId != Offsets::eDI_Keyboard) {
-            return false;
-        }
-
-        const auto key = event.keyId;
-        // Engagement is handled by the native hold-E prompt actions
-        // (foot_magnetism_activate/deactivate); the listener only tracks
-        // manual movement keys.
-        const bool isMoveKey = key == Offsets::eKI_W || key == Offsets::eKI_A ||
-                               key == Offsets::eKI_S || key == Offsets::eKI_D;
-        if (!isMoveKey) {
-            return false;
-        }
-        if (key == Offsets::eKI_W && g_syntheticPressInFlight.load()) {
-            return false; // our own press
-        }
-        // Only fresh presses count as manual input: the engine re-broadcasts
-        // held keys as Down events every frame, which must not be mistaken
-        // for player input while we hold W synthetically.
-        if (event.state == Offsets::eIS_Pressed) {
-            g_manualInput.store(true);
-            if (key == Offsets::eKI_W) {
-                g_userWHeld.store(true);
-            }
-        } else if (event.state == Offsets::eIS_Released && key == Offsets::eKI_W) {
-            g_userWHeld.store(false);
-        }
         return false; // never consume
     }
 
@@ -707,9 +697,9 @@ void BindPromptActions(wh::playermodule::I_ActionSets* actionSets)
     const std::function<void()> toggle(
         []() { FollowController::RequestToggle(); });
 
-    // These rows intentionally share E. Context changes such as combat can
-    // rebuild the active map with either row winning the same-key conflict,
-    // so both rows must perform the same state-aware operation.
+    // RegisterAction stores these callbacks in the durable registry. Context
+    // rebuilds copy them into active dispatch; both same-key rows intentionally
+    // share one state-aware operation regardless of which row wins the key.
     actionSets->RegisterAction(ctx, activate, toggle, 1);
     actionSets->RegisterAction(ctx, deactivate, toggle, 1);
 }
@@ -760,9 +750,6 @@ void UpdatePromptFlags(bool onRoad, bool engaged, bool manualHeld)
 
     static int lastShowA = -1;
     static int lastShowD = -1;
-    const bool promptBecameVisible =
-        (showActivate && lastShowA != 1) ||
-        (showDeactivate && lastShowD != 1);
     if (lastShowA != showActivate || lastShowD != showDeactivate) {
         lastShowA = showActivate;
         lastShowD = showDeactivate;
@@ -792,25 +779,19 @@ void UpdatePromptFlags(bool onRoad, bool engaged, bool manualHeld)
     actionSets->SetActionVisible(ctx, activate, showActivate, 1);
     actionSets->SetActionVisible(ctx, deactivate, showDeactivate, 1);
 
-    // Rebind after the visibility mutation when a row returns. RegisterAction
-    // is an idempotent overwrite in C_ActionSets and bindLive=1 repairs the
-    // active dispatch copy after action-map/context rebuilds.
-    if (promptBecameVisible) {
-        BindPromptActions(actionSets);
-    }
 }
 
 void RequestToggle()
 {
     // Both same-key rows may dispatch in one input frame. A boolean collapses
     // duplicate callbacks into one contextual operation on the next tick.
-    g_toggleRequested.store(true);
+    g_toggleRequest.Request();
 }
 
 void Enable()
 {
     EnsureInputListener();
-    g_toggleRequested.store(false);
+    g_toggleRequest.Block(FollowInteraction::ToggleBlocker::Context);
     g_phase.store(Phase::AwaitingRoad);
     g_smoother = {};
     g_targetYaw = 0.0f;
@@ -826,7 +807,7 @@ void Enable()
 
 void Disable()
 {
-    g_toggleRequested.store(false);
+    g_toggleRequest.Block(FollowInteraction::ToggleBlocker::Context);
     ReleaseForward();
     RoadFollowPort::SetActionActive(false);
     ResetTravelFrame();
@@ -837,7 +818,7 @@ void Disable()
 
 void Reset()
 {
-    g_toggleRequested.store(false);
+    g_toggleRequest.ResetBlocked();
     ReleaseForward();
     g_rootMenuOpen.store(false);
     g_fullUIModeActive.store(false);
@@ -861,6 +842,7 @@ void Tick()
         : nullptr;
 
     if (!player || IsMounted()) {
+        g_toggleRequest.Block(FollowInteraction::ToggleBlocker::Context);
         ReleaseForward();
         RoadFollowPort::SetActionActive(false);
         ResetTravelFrame();
@@ -885,6 +867,7 @@ void Tick()
     // Native tuning values.
     const NativeMagnetism::FrameCVars* cvars = nullptr;
     if (!NativeMagnetism::RefreshFrameCVars(cvars) || !cvars) {
+        g_toggleRequest.Block(FollowInteraction::ToggleBlocker::Context);
         return;
     }
 
@@ -892,8 +875,8 @@ void Tick()
     // state, but never keep our synthetic W held while the UI owns the
     // keyboard. No sampling, timers, prompt mutation, or travel-frame reset
     // occurs here.
-    if (g_rootMenuOpen.load() || g_fullUIModeActive.load() ||
-        g_skipTimeDialogOpen.load()) {
+    g_toggleRequest.Unblock(FollowInteraction::ToggleBlocker::Context);
+    if (IsInputOwningUIOpen()) {
         g_cameraRecenteringEnabled.store(false);
         HorseCameraRecenter::Reset();
         ReleaseForward();
@@ -910,26 +893,25 @@ void Tick()
     }
 
     const bool manualHeld = IsManualHeld();
+    const bool chat = IsChatFollowActive();
 
     // The hold-E actions drive the mode-1 machine's action-controlled engage
-    // bit (bit0). Do not consume an activation while WASD still owns movement:
-    // asserting bit0 on that tick immediately arms the native interruption
-    // state, leaving later activation callbacks to reassert an already-set
-    // bit. Retain the completed hold request until the first neutral tick.
+    // bit (bit0). A completed action is consumed exactly once; invalid/manual
+    // activation is rejected rather than retained until input later changes.
     const bool latchedBeforeToggle = RoadFollowPort::GetState().latched;
-    if (g_toggleRequested.load() &&
-        (latchedBeforeToggle || !manualHeld) &&
-        g_toggleRequested.exchange(false)) {
-        if (latchedBeforeToggle) {
-            RoadFollowPort::SetActionActive(false);
-            Disable();
-            return;
-        }
+    const auto toggle = g_toggleRequest.Consume(
+        latchedBeforeToggle, manualHeld, !chat);
+    if (toggle == FollowInteraction::ToggleResolution::Disengage) {
+        RoadFollowPort::SetActionActive(false);
+        Disable();
+        return;
+    }
+    if (toggle == FollowInteraction::ToggleResolution::Engage) {
         RoadFollowPort::SetActionActive(true);
         Log::Write("[AutoWalk] FollowController: engaged via hold E.");
+    } else if (toggle == FollowInteraction::ToggleResolution::Cancelled) {
+        Log::Write("[AutoWalk] FollowController: hold-E request canceled (manual input or invalid context).");
     }
-
-    const bool chat = IsChatFollowActive();
 
     // The recovered mode-1 tick: the native sampler with the native
     // acquisition radius + the OnPress state machine (unwired machine ->
