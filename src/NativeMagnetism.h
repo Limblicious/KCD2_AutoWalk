@@ -11,6 +11,9 @@ struct FrameCVars {
     float rotationMax = 0.0f;    // +0xE8  RotationMax
     float smoothOutSpeed = 0.0f; // +0xEC  RotationSmoothOutSpeed
     float smoothInSpeed = 0.0f;  // +0xF0  RotationSmoothInSpeed
+    float cameraCentering = 0.0f; // +0x100 CameraCentering
+    float cameraCenteringTime = 0.0f; // +0x104 CameraCenteringTime
+    float cameraCenteringPitchOffset = 0.0f; // +0x110 CameraCenteringPitchOffset
     float clampDelta = 0.0f;     // +0x16C ClampDelta
     float roadDistOff = 0.0f;    // +0xD4  RoadMagnetismOnPressRoadDistOff
     float roadDistOn = 0.0f;     // +0xD8  RoadMagnetismOnPressRoadDistOn

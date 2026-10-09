@@ -48,6 +48,9 @@ bool RefreshFrameCVars(const FrameCVars*& out)
     g_cvars.rotationMax = read(0xE8);
     g_cvars.smoothOutSpeed = read(0xEC);
     g_cvars.smoothInSpeed = read(0xF0);
+    g_cvars.cameraCentering = read(0x100);
+    g_cvars.cameraCenteringTime = read(0x104);
+    g_cvars.cameraCenteringPitchOffset = read(0x110);
     g_cvars.clampDelta = read(0x16C);
     g_cvars.roadDistOff = read(0xD4);
     g_cvars.roadDistOn = read(0xD8);

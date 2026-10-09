@@ -8,12 +8,14 @@
 #include <MinHook.h>
 
 #include "FootRoad.h"
+#include "HorseCameraRecenter.h"
 #include "InputSeam.h"
 #include "Log.h"
 #include "NativeMagnetism.h"
 #include "RoadFollowPort.h"
 #include "Offsets/vtables/IInput.h"
 #include "Offsets/vtables/IInputEventListener.h"
+#include "crysystem/CCamera.h"
 #include "crysystem/CCryAction.h"
 #include "crysystem/SSystemGlobalEnvironment.h"
 #include "entitymodule/C_ActorPhysicsState.h"
@@ -45,12 +47,44 @@ bool g_movementHookAttempted = false;
 // camera look. The native steering command turns this frame; the movement
 // hook replaces the vanilla camera-relative velocity direction with it.
 std::atomic<bool> g_followActive{false};
+std::atomic<bool> g_cameraRecenteringEnabled{false};
 float g_travelYaw = 0.0f;
 bool g_travelValid = false;
+
+wh::entitymodule::C_Player* GetPlayer()
+{
+    auto* framework = CCryAction::GetInstance();
+    return framework
+        ? static_cast<wh::entitymodule::C_Player*>(framework->GetClientActor())
+        : nullptr;
+}
+
+float g_lastPosX = 0.0f;
+float g_lastPosY = 0.0f;
+float g_lastPosZ = 0.0f;
+bool g_lastPosValid = false;
+
+// The engine's current view camera matrix (CSystem+0x288 CCamera): the
+// ACTUAL displayed camera orientation, independent of the view state.
+float ReadCameraYaw()
+{
+    auto* env = SSystemGlobalEnvironment::GetInstance();
+    if (!env || !env->_unkC8) {
+        return 0.0f;
+    }
+    const auto* cam = reinterpret_cast<const CCamera*>(
+        reinterpret_cast<std::uintptr_t>(env->_unkC8) + 0x288);
+    const Vec3 fwd = cam->GetViewdir();
+    return std::atan2(-fwd.x, fwd.y);
+}
 
 void MovementRequestHook(void* self, float dt, float* out)
 {
     g_originalMovementRequest(self, dt, out);
+    auto* player = GetPlayer();
+    if (!player || self != player->m_pMovementController) {
+        return;
+    }
     if (!g_followActive.load() || !g_travelValid) {
         return;
     }
@@ -64,6 +98,38 @@ void MovementRequestHook(void* self, float dt, float* out)
     const float yaw = g_travelYaw;
     out[3] = -std::sin(yaw) * speed;
     out[4] = std::cos(yaw) * speed;
+    if (g_cameraRecenteringEnabled.load()) {
+        // Ground truth for the centering-frame diagnostics: Henry's body
+        // orientation, his ACTUAL displacement direction between frames,
+        // and the displayed camera orientation.
+        float bodyYaw = yaw;
+        float moveYaw = yaw;
+        auto* framework = CCryAction::GetInstance();
+        if (auto* entity = framework ? framework->GetClientEntity() : nullptr) {
+            const auto* tm = reinterpret_cast<const float*>(
+                reinterpret_cast<std::uintptr_t>(entity) + 0x58);
+            bodyYaw = std::atan2(-tm[1], tm[5]);
+            const float px = tm[3];
+            const float py = tm[7];
+            const float pz = tm[11];
+            if (g_lastPosValid) {
+                const float dx = px - g_lastPosX;
+                const float dy = py - g_lastPosY;
+                if (dx * dx + dy * dy > 1.0e-6f) {
+                    moveYaw = std::atan2(-dx, dy);
+                }
+            }
+            g_lastPosX = px;
+            g_lastPosY = py;
+            g_lastPosZ = pz;
+            g_lastPosValid = true;
+        }
+        // S_MountAnimState+0x18 is the Ang3 look request copied into
+        // C_ActorPhysicsState::m_lookDeltaRequest by the immediately
+        // following native physics-state tick.
+        HorseCameraRecenter::Update(player, yaw, dt, out[6], out[8],
+                                    bodyYaw, moveYaw, ReadCameraYaw());
+    }
     // NOTE: m_rootRotation (out+0x3C) is NOT overwritten here -- its exact
     // role is still "MED"-unverified (quat vs look/aim data), and writing it
     // was observed to couple the mouse look into the travel direction. The
@@ -130,6 +196,8 @@ bool g_nativeEnsured = false;
 void ResetTravelFrame()
 {
     g_followActive.store(false);
+    g_cameraRecenteringEnabled.store(false);
+    HorseCameraRecenter::Reset();
     g_travelValid = false;
     g_targetValid = false;
     g_smoother = {};
@@ -148,23 +216,6 @@ float WrapPi(float a)
     while (a > 3.14159265f) a -= 6.28318531f;
     while (a < -3.14159265f) a += 6.28318531f;
     return a;
-}
-
-// Henry's C_ActorPhysicsState (C_Actor+0x238): the vanilla look-state machine
-// behind the view. The mounted seam (HorseFlatYaw_To_RiderLookAccum,
-// REL 37998) pumps the horse yaw delta into its +0x88 m_lookAngleAccum; the
-// foot port pumps the smoothed road-yaw delta into the same channel.
-wh::entitymodule::C_ActorPhysicsState* GetPhysicsState()
-{
-    auto* framework = CCryAction::GetInstance();
-    auto* player = framework
-        ? static_cast<wh::entitymodule::C_Player*>(framework->GetClientActor())
-        : nullptr;
-    if (!player) {
-        return nullptr;
-    }
-    return *reinterpret_cast<wh::entitymodule::C_ActorPhysicsState**>(
-        reinterpret_cast<std::uintptr_t>(player) + 0x238);
 }
 
 // User-held W tracking: the listener sees fresh (untagged) W presses and
@@ -256,6 +307,8 @@ void UIMenuOpenHook(void* self, char mode)
     // Release before the menu begins consuming keyboard input so our synthetic
     // W cannot become a held navigation key.
     g_rootMenuOpen.store(true);
+    g_cameraRecenteringEnabled.store(false);
+    HorseCameraRecenter::Reset();
     ReleaseForward();
     g_lastTick = {};
     if (g_originalUIMenuOpen) {
@@ -278,6 +331,8 @@ void FullUIModeEventHook(void* self, void* a2, bool bActive)
 {
     g_fullUIModeActive.store(bActive);
     if (bActive) {
+        g_cameraRecenteringEnabled.store(false);
+        HorseCameraRecenter::Reset();
         ReleaseForward();
         g_lastTick = {};
     }
@@ -358,6 +413,37 @@ class InputListener final : public Offsets::IInputEventListener {
 public:
     bool OnInputEvent(const Offsets::SInputEvent& event) override
     {
+        // Discovery diagnostic: which devices/keys produce non-keyboard
+        // changed events (the mouse look may arrive as XI stick axes).
+        if (event.deviceId != Offsets::eDI_Keyboard &&
+            event.state == Offsets::eIS_Changed) {
+            static std::chrono::steady_clock::time_point last{};
+            const auto now = std::chrono::steady_clock::now();
+            if (last == std::chrono::steady_clock::time_point{} ||
+                now - last >= std::chrono::seconds(1)) {
+                last = now;
+                Log::Write(std::string("[AutoWalk] input: changed dev=") +
+                           std::to_string(static_cast<int>(event.deviceId)) +
+                           " key=" + std::to_string(event.keyId) +
+                           " value=" + std::to_string(event.value));
+            }
+        }
+        // Look axes on the mouse or XInput device: the on-foot user-look
+        // source. Both shapes are recorded because KCD2 may map mouse
+        // deltas onto XI stick axes for the look action (xi_rotateyaw).
+        const bool lookAxis =
+            (event.deviceId == Offsets::eDI_Mouse &&
+             (event.keyId == Offsets::eKI_MouseX ||
+              event.keyId == Offsets::eKI_MouseY)) ||
+            (event.deviceId == Offsets::eDI_XI &&
+             (event.keyId == Offsets::eKI_XI_ThumbRX ||
+              event.keyId == Offsets::eKI_XI_ThumbRY));
+        if (lookAxis) {
+            if (event.value != 0.0f) {
+                HorseCameraRecenter::NotifyMouseLook();
+            }
+            return false;
+        }
         if (event.deviceId != Offsets::eDI_Keyboard) {
             return false;
         }
@@ -523,6 +609,8 @@ void Enable()
     g_targetValid = false;
     g_travelValid = false;
     g_followActive.store(false);
+    g_cameraRecenteringEnabled.store(false);
+    HorseCameraRecenter::Reset();
     RoadFollowPort::SetActionActive(true);
     Log::Write("[AutoWalk] FollowController: enabled (mode-1 engage).");
 }
@@ -588,6 +676,8 @@ void Tick()
     // keyboard. No sampling, timers, prompt mutation, or travel-frame reset
     // occurs here.
     if (g_rootMenuOpen.load() || g_fullUIModeActive.load()) {
+        g_cameraRecenteringEnabled.store(false);
+        HorseCameraRecenter::Reset();
         ReleaseForward();
         g_lastTick = now;
         return;
@@ -702,6 +792,7 @@ void Tick()
         g_travelYaw += g_smoother.smoothed;
 
         g_followActive.store(true);
+        g_cameraRecenteringEnabled.store(true);
         HoldForward();
         g_phase.store(Phase::Following);
     } else {
@@ -722,9 +813,12 @@ void Tick()
                    " yawFrom=" + std::to_string(sample.yawFrom) +
                    " flags=" + std::to_string(static_cast<int>(portState.flags)) +
                    " smoothed=" + std::to_string(g_smoother.smoothed) +
-                   " travelYaw=" + std::to_string(g_travelYaw) +
-                   " rotMax=" + std::to_string(cvars->rotationMax) +
-                   " enterAngle=" + std::to_string(cvars->enterAngle));
+                    " travelYaw=" + std::to_string(g_travelYaw) +
+                    " rotMax=" + std::to_string(cvars->rotationMax) +
+                    " enterAngle=" + std::to_string(cvars->enterAngle) +
+                    " cameraCentering=" + std::to_string(cvars->cameraCentering) +
+                    " cameraPitchOffset=" +
+                    std::to_string(cvars->cameraCenteringPitchOffset));
     }
 }
 

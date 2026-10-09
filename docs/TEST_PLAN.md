@@ -79,7 +79,25 @@ With native controller active and WASD neutral:
 
 ## 6. Camera parity
 
-After camera decompilation:
+Mounted-style recenter milestone:
+
+- engage on a straight road, move the mouse at least 90 degrees away, and
+  verify mouse look remains immediately authoritative while input is present;
+- release the mouse and verify the view blends smoothly toward the autonomous
+  travel heading using the native `CameraCentering` rate and pitch offset;
+- follow a long curve and verify the recenter target tracks travel without
+  oscillation, snapping, or feeding back into steering;
+- open ESC, inventory, map, and another full-UI screen while offset from the
+  travel heading; verify no camera delta is applied in UI and resume starts a
+  fresh blend from the current view;
+- test brief and sustained WASD, explicit deactivation, road loss, save/load,
+  and mounting; verify no stale camera delta survives cleanup;
+- trigger an interaction/focus-camera sequence during follow and verify the
+  AutoWalk recenter yields until the native focus owner releases the view;
+- ride normally with AutoWalk inactive and verify native horseback camera
+  behavior is unchanged.
+
+Separate target-relative view-limit gate:
 
 - apply the same mounted view-limit semantics;
 - verify free-look while Henry turns;

@@ -446,6 +446,49 @@ Allocates 0x30 and calls S_OnPressController_Ctor(obj, S_HorseData*, moveAdapter
   (ViewLimitWide/Narrow/Bottom), clamp via ActorViewLimit_Clamp (0x18053B508,
   REL 30673).
 
+#### Mounted centering input, ownership, and blend (branch-complete)
+- The caller is `C_RiderPlayerInput::Update` (0x180A4EAB4). It passes
+  `C_RiderStateMachine*` (`input+0x30`), `C_RiderPlayerInput::m_look`
+  (`input+0x9CC`), `S_HorseData*`, an allow flag, and native frame dt.
+- `I_MovementInputListener::OnMovementInput` (0x18059BB20) copies the game's
+  look vector directly into `m_look`. Centering treats `m_look.x != 0` or
+  `m_look.z != 0` as player look input and calls the reset helper
+  (0x180A51058) every such frame.
+- The reset helper clears `m_centerBlend (+0x910)`, the two SmoothCD velocity
+  terms, and the magnetism transition byte; it captures the current native
+  center values and current timer time. There is no guessed mouse timer in
+  the ordinary branch.
+- `C_Player+0xCF0` is the FocusCamera object. The routine reads
+  `FocusCamera::m_flags bit 1`; while FocusCamera is active, mounted
+  centering does not write the actor look accumulator. FocusCamera is
+  therefore a competing camera owner, not the mounted recenter mechanism.
+- With no look input, the target quaternion is
+  `horseEntityRotation * relativeYaw * pitch(CameraCenteringPitchOffset +
+  smoothedHorsePitch)`. Magnetism may add a clamped relative-yaw term; its
+  absolute body frame still comes from the horse entity rotation.
+- Blend-in is exact: `m_centerBlend += CameraCentering * dt`, clamp to 1,
+  then slerp from the current actor view quaternion to the target by that
+  cumulative blend. The routine converts `inverse(current) * target` to
+  `Ang3` and additively writes all three components to
+  `C_ActorPhysicsState::m_lookAngleAccum`.
+- `C_ActorPhysicsState::Tick` consumes the accumulator later in the same
+  pre-physics update and clears it. `C_CameraRider::Compose` is downstream
+  output smoothing; it is not the recenter state machine.
+
+#### On-foot adaptation decision
+- Use the same pre-physics movement-request seam already hooked for travel:
+  its request `+0x18 Ang3` is copied immediately afterward to
+  `m_lookDeltaRequest`, so x/z are the on-foot equivalents of mounted
+  `m_look.x/.z`.
+- Replace only the horse entity's absolute yaw with the independently
+  recovered `g_travelYaw`. Keep the native CameraCentering rate,
+  CameraCenteringPitchOffset, cumulative slerp, quaternion delta, and
+  `m_lookAngleAccum` output channel.
+- Reset on manual look, autonomous-follow cleanup, UI ownership, and active
+  FocusCamera. Do not install a synthetic FocusCamera provider: its target
+  focus/limit lifecycle is orthogonal and the mounted routine explicitly
+  yields to it.
+
 ## View/body separation seam (recovered — the body-facing mechanism)
 
 The player's C_ActorPhysicsState keeps the VIEW and the BODY flat yaw as
