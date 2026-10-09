@@ -123,6 +123,9 @@ void LogState(std::string_view gate, float lookPitch, float lookYaw,
 void Reset()
 {
     g_centerBlend = 0.0f;
+    // Drop the previous logged target so tgtDeltaDps cannot span separate
+    // follow sessions after a disengage.
+    g_prevTargetValid = false;
 }
 
 void SetLookMonitoring(bool active)
@@ -190,9 +193,13 @@ void Update(wh::entitymodule::C_Player* player, float dt,
     const Quat desired = RecenterTarget(gt.flatYaw, gt.travelYaw, pitch);
 
     // REL 56442 computes inverse(currentView) * slerp(currentView, target,
-    // blend), converts to Euler, and adds all three components to the
-    // accumulator consumed and cleared by the actor physics tick.
-    state->m_lookAngleAccum += RecenterDelta(current, desired, g_centerBlend);
+    // blend), converts to Euler, and adds the result to the accumulator.
+    // The per-frame pull is capped at the native CameraCentering rate: the
+    // composed target can retreat with the view (flat yaw follows it), and
+    // an uncapped full-error pull stacks into a spin (runtime-observed).
+    Ang3 delta = RecenterDelta(current, desired, g_centerBlend);
+    delta = ClampDeltaStep(delta, centering * dt);
+    state->m_lookAngleAccum += delta;
 
     const Ang3 curAngles = Ang3(current);
     LogState("apply", lookPitch, lookYaw, g_centerBlend, focusFlags,

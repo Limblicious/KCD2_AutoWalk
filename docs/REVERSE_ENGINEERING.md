@@ -551,6 +551,17 @@ pipeline is **flat-yaw-relative**, not world-space:
   the camera moves; a residual transient exists while `travelYaw`
   re-converges after fast view rotation. The runtime `tgtDeltaDps` /
   `tgtErrCam` diagnostics verify stability.
+- **Pull-rate cap (2026-10-10, runtime-required)**: the first deployed
+  correction applied the full remaining error per frame once the blend
+  reached 1; because the flat yaw follows the view, the composed target
+  retreats at the pull rate and the error never shrank -- runaway spin.
+  The native never applies a full-error pull (its target is view-independent
+  and its pull is blend/heading-stage rate-limited). The port now caps the
+  per-frame pull at the native CameraCentering rate (`ClampDeltaStep`,
+  `CameraRecenterMath.h`), keeping the pull below the road-follow
+  compensation rate so the loop converges monotonically. The omitted native
+  heading SmoothCD stage remains approximated by this cap, not by the
+  verbatim stage.
 
 #### Input-listener registration (2026-10-09 fix)
 `EnsureInputListener()` was previously reachable only through

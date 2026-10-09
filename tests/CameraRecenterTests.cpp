@@ -159,6 +159,36 @@ void TestWrapPi()
     CHECK(std::abs(WrapPi(-2.5f) + 2.5f) < 1.0e-6f);
 }
 
+// 12. The per-frame pull is capped at the CameraCentering rate: an
+//     uncapped full-error pull into a retreating target stacked into a spin
+//     (runtime-observed). The clamp must bound the step and preserve its
+//     direction, and pass small deltas through unchanged.
+void TestDeltaStepClamp()
+{
+    // Large delta: capped to maxStep, direction preserved.
+    {
+        const Ang3 delta(0.6f, 0.0f, 0.0f);
+        const Ang3 clamped = ClampDeltaStep(delta, 0.01f);
+        CHECK(std::abs(clamped.x - 0.01f) < 1.0e-6f);
+        CHECK(std::abs(clamped.y) < 1.0e-6f);
+        CHECK(std::abs(clamped.z) < 1.0e-6f);
+    }
+    // Small delta: unchanged.
+    {
+        const Ang3 delta(0.005f, 0.0f, 0.0f);
+        const Ang3 clamped = ClampDeltaStep(delta, 0.01f);
+        CHECK(std::abs(clamped.x - 0.005f) < 1.0e-6f);
+    }
+    // The native rate: CameraCentering * dt at 60 fps.
+    {
+        const float centering = 0.2f;
+        const float dt = 1.0f / 60.0f;
+        const Ang3 delta(1.5f, 0.0f, 0.0f);
+        const Ang3 clamped = ClampDeltaStep(delta, centering * dt);
+        CHECK(std::abs(clamped.x - centering * dt) < 1.0e-6f);
+    }
+}
+
 } // namespace
 
 int main()
@@ -174,6 +204,7 @@ int main()
     TestDeltaFromRotatedView();
     TestTargetCompositionFromRuntimeSamples();
     TestWrapPi();
+    TestDeltaStepClamp();
 
     std::printf("CameraRecenterTests: %d checks, %d failures\n", g_checks,
                 g_failures);
