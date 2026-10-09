@@ -8,13 +8,24 @@
 
 namespace AutoWalk::HorseCameraRecenter {
 
-// Builds the autonomous recenter target quaternion. The native mounted
-// target is horseEntityRotation * relativeYaw * pitch(...); on foot the
-// autonomous travel frame replaces the horse entity orientation. The
-// CameraCenteringPitchOffset (radians) is the native pitch term.
-inline Quat RecenterTarget(float travelYaw, float pitchOffset)
+// Wrap an angle into (-pi, pi].
+inline float WrapPi(float a)
 {
-    return Quat::CreateRotationZ(travelYaw) *
+    while (a > 3.14159265f) a -= 6.28318531f;
+    while (a < -3.14159265f) a += 6.28318531f;
+    return a;
+}
+
+// Builds the autonomous recenter target quaternion. The road-follow command
+// (travelYaw) is flat-relative: the native sampler returns a
+// facing-normalized road direction and the movement consumer applies the
+// request in the flat-yaw frame, so the true world movement heading is
+// flatYaw + travelYaw (runtime-verified: prediction B across three
+// conditions, error within ~2 degrees). The CameraCenteringPitchOffset
+// (radians) is the native pitch term.
+inline Quat RecenterTarget(float flatYaw, float travelYaw, float pitchOffset)
+{
+    return Quat::CreateRotationZ(WrapPi(flatYaw + travelYaw)) *
            Quat::CreateRotationX(pitchOffset);
 }
 

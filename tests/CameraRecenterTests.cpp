@@ -79,12 +79,12 @@ void TestNoDelay()
 // --- Target / delta construction ------------------------------------------
 
 // 6. With a full blend, the delta pulls the identity view exactly onto the
-//    travel yaw: the target construction maps travelYaw to view yaw with
-//    no offset or sign flip.
+//    composed world target yaw: the target construction maps
+//    WrapPi(flatYaw + travelYaw) to view yaw with no offset or sign flip.
 void TestDeltaYawConvention()
 {
     const Quat current = Quat::CreateIdentity();
-    const Quat desired = RecenterTarget(0.5f, 0.0f);
+    const Quat desired = RecenterTarget(0.0f, 0.5f, 0.0f);
     const Ang3 delta = RecenterDelta(current, desired, 1.0f);
     CHECK(std::abs(delta.z - 0.5f) < 1.0e-4f);
     CHECK(std::abs(delta.x) < 1.0e-4f);
@@ -94,7 +94,7 @@ void TestDeltaYawConvention()
 void TestDeltaZeroBlend()
 {
     const Quat current = Quat::CreateIdentity();
-    const Quat desired = RecenterTarget(1.5f, 0.0f);
+    const Quat desired = RecenterTarget(0.0f, 1.5f, 0.0f);
     const Ang3 delta = RecenterDelta(current, desired, 0.0f);
     CHECK(std::abs(delta.z) < 1.0e-4f);
     CHECK(std::abs(delta.x) < 1.0e-4f);
@@ -104,7 +104,7 @@ void TestDeltaZeroBlend()
 void TestDeltaPitchOffset()
 {
     const float pitch = -2.5f * kDegToRad;
-    const Quat desired = RecenterTarget(0.0f, pitch);
+    const Quat desired = RecenterTarget(0.0f, 0.0f, pitch);
     const Ang3 delta = RecenterDelta(Quat::CreateIdentity(), desired, 1.0f);
     CHECK(std::abs(delta.x - pitch) < 1.0e-4f);
     CHECK(std::abs(delta.z) < 1.0e-4f);
@@ -115,9 +115,48 @@ void TestDeltaPitchOffset()
 void TestDeltaFromRotatedView()
 {
     const Quat current = Quat::CreateRotationZ(0.4f);
-    const Quat desired = RecenterTarget(0.5f, 0.0f);
+    const Quat desired = RecenterTarget(0.0f, 0.5f, 0.0f);
     const Ang3 delta = RecenterDelta(current, desired, 1.0f);
     CHECK(std::abs(delta.z - 0.1f) < 1.0e-4f);
+}
+
+// --- Reference-frame composition (runtime-verified samples) ----------------
+
+// 10. The composed world target reproduces the measured displacement heading
+//     from the three-condition runtime logs (prediction B: move =
+//     WrapPi(flat + request)). Samples: 1529, 1564, 1620. Tolerance 0.005 rad
+//     (~0.29 deg) covers the log's ~0.2 deg sampling-lag residual.
+void TestTargetCompositionFromRuntimeSamples()
+{
+    // Line 1529 (locked recenter): flat=-1.307489, travel=-1.307491,
+    // measured moveWin=-2.614908.
+    {
+        const Quat q = RecenterTarget(-1.307489f, -1.307491f, 0.0f);
+        const Ang3 a(q);
+        CHECK(std::abs(WrapPi(-1.307489f + -1.307491f) - a.z) < 1.0e-4f);
+        CHECK(std::abs(WrapPi(a.z - (-2.614908f))) < 0.005f);
+    }
+    // Line 1564 (view held ~90 deg right): flat=2.690169, travel=1.187411,
+    // measured moveWin=-2.404747.
+    {
+        const Quat q = RecenterTarget(2.690169f, 1.187411f, 0.0f);
+        const Ang3 a(q);
+        CHECK(std::abs(WrapPi(a.z - (-2.404747f))) < 0.005f);
+    }
+    // Line 1620 (looking down the path): flat=-2.648023, travel=0.058675,
+    // measured moveWin=-2.592822.
+    {
+        const Quat q = RecenterTarget(-2.648023f, 0.058675f, 0.0f);
+        const Ang3 a(q);
+        CHECK(std::abs(WrapPi(a.z - (-2.592822f))) < 0.005f);
+    }
+}
+
+// 11. WrapPi normalizes both directions.
+void TestWrapPi()
+{
+    CHECK(std::abs(WrapPi(3.877580f) - (-2.405605f)) < 1.0e-4f);
+    CHECK(std::abs(WrapPi(-2.5f) + 2.5f) < 1.0e-6f);
 }
 
 } // namespace
@@ -133,6 +172,8 @@ int main()
     TestDeltaZeroBlend();
     TestDeltaPitchOffset();
     TestDeltaFromRotatedView();
+    TestTargetCompositionFromRuntimeSamples();
+    TestWrapPi();
 
     std::printf("CameraRecenterTests: %d checks, %d failures\n", g_checks,
                 g_failures);

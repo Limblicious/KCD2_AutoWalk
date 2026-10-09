@@ -136,6 +136,24 @@ Pass criterion: one prediction consistently near 0° error in all three
 conditions; the others diverge when the view is turned away. Do not change
 the movement vector until the consumer's coordinate space is confirmed.
 
+### Outcome (2026-10-10): prediction B confirmed
+`move ≈ WrapPi(flatYaw + requestYaw)` in all three conditions (within
+~2 deg; A fails by 68-162 deg). The pipeline is flat-yaw-relative end to
+end: the sampler's yawFrom is facing-normalized and the consumer applies
+the request in the flat-yaw frame. `g_travelYaw` is a flat-relative
+command; the camera target is now the composed world heading
+`WrapPi(flatYaw + travelYaw)`. The road-follow movement itself was already
+correct in this frame.
+
+Acceptance for the corrected target:
+
+1. camera gradually centers along Henry's actual movement direction;
+2. stays aligned through curves;
+3. no chasing/oscillation (`tgtDeltaDps` and `tgtErrCam` stable);
+4. mouse movement interrupts recentering immediately;
+5. no new road-following deviations;
+6. disengagement restores ordinary camera behavior.
+
 ## 7. Manual WASD handoff
 
 Use recovered native interruption rules.

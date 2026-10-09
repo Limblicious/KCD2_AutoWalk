@@ -495,7 +495,7 @@ handles it:
 
 | Native term | Native source | Foot handling | Status |
 |---|---|---|---|
-| Absolute body frame | horse entity rotation (`S_HorseData+0xF8 -> vf0x180`) | `g_travelYaw` (the autonomous travel frame) | REPLACED — **equivalence with Henry's physical travel is UNVERIFIED**; pending the ground-truth `body/move/cam` comparison |
+| Absolute body frame | horse entity rotation (`S_HorseData+0xF8 -> vf0x180`) | `WrapPi(m_flatYaw + g_travelYaw)` — the travel command is flat-relative (see below), so the world travel heading is the sum | REPLACED — **runtime-verified** (three-condition experiment, prediction B within ~2 deg) |
 | Relative yaw | mounted rig relative angle | omitted (rig-specific, no on-foot analog) | OMITTED |
 | Road-magnetism yaw | `RoadState_GetIndex` vs `param_3[0x24]` + `MagnetismDegreeLimit` clamp | omitted: the road-follow yaw already enters through `g_travelYaw` (which chases the native road sampler output); a separate magnetism-yaw term would double-count | OMITTED (documented rationale) |
 | Heading SmoothCD | state `+0x918/+0x91C` chasing `FUN_180a50dcc` (degrees) | omitted: that smoothing feeds the native pitch composition (`pitchOffset + smoothed`); on foot there is no recovered analog source | OMITTED — native parity claim does NOT include this term |
@@ -524,6 +524,33 @@ runtime-unverified; the blend/delay/delta/output math is a verbatim port.
 - Unresolved until `0x180A51058` is decompiled: whether an
   engagement/menu-close reset should also restart the delay. Current choice
   (no stamp) is the conservative reading of the verified flow.
+
+#### Reference-frame correction (2026-10-10, runtime-verified)
+The three-condition experiment (locked recenter / view held ~90 deg /
+looking down the path) established that the whole on-foot road-follow
+pipeline is **flat-yaw-relative**, not world-space:
+
+- `moveYaw ≈ WrapPi(flatYaw + requestYaw)` in every condition (error
+  within ~2 deg; the competing `move ≈ request` prediction fails by
+  68-162 deg). `flatYaw` = `C_ActorPhysicsState::m_flatYaw` (+0x44), the
+  view-derived body-facing reference; the entity world-TM rotation and the
+  rendered camera track it exactly.
+- The road sampler's `yawFrom` (`m_magnetYaw`) is facing-normalized: it
+  returns the road heading relative to the flat yaw, so
+  `flatYaw + magnetYaw` reproduces the world road heading (0.2-4.9 deg
+  agreement with the measured displacement).
+- The movement request consumer therefore applies the request velocity in
+  the flat-yaw frame; the vanilla "world-rotated" field comment described
+  the PRODUCER (view yaw + local input), not the consumer contract.
+- Consequence: `g_travelYaw` is a flat-relative command. The movement
+  (flat + travel) was correct; only the camera target misused `travelYaw`
+  as a world heading. The recenter target is now
+  `WrapPi(m_flatYaw + g_travelYaw)`.
+- Feedback note: `magnetYaw = R - flatYaw` cancels the flat term in
+  `flat + travel`, so the composed target tracks the road heading R while
+  the camera moves; a residual transient exists while `travelYaw`
+  re-converges after fast view rotation. The runtime `tgtDeltaDps` /
+  `tgtErrCam` diagnostics verify stability.
 
 #### Input-listener registration (2026-10-09 fix)
 `EnsureInputListener()` was previously reachable only through
