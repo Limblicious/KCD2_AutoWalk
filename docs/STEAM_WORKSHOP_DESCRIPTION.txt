@@ -1,4 +1,4 @@
-[h1]AutoWalk - Follow Roads on Foot[/h1]
+[h1]Dismounted path following[/h1]
 
 Follow roads on foot just like riding.
 
@@ -8,15 +8,16 @@ Stand on or near a suitable road and hold [b]E[/b]. Henry latches onto the path 
 [list]
 [*]Hold [b]E[/b] near a road to begin following it.
 [*]W/A/S/D immediately return control to you; release them to resume if the road follow is still active.
-[*]Inventory, map, perks, pause, alchemy, and other full-screen menus suspend AutoWalk input.
-[*]AutoWalk resumes automatically after closing a menu.
+[*]The camera auto-centers toward Henry's direction of travel after a moment of no mouse input; moving the mouse interrupts it immediately.
+[*]Inventory, map, perks, pause, alchemy, and other full-screen menus suspend the auto-input.
+[*]Following resumes automatically after closing a menu.
 [*]Normal walking, sprinting, stamina, combat, riding, collision, and animation remain unchanged.
 [*]Displays a Henry-specific warning when no suitable road is available.
 [/list]
 
 [h2]Version and compatibility[/h2]
 [list]
-[*]AutoWalk version: [b]0.1.0[/b]
+[*]Version: [b]0.2.0[/b]
 [*]Supported game version: [b]KCD2 Steam 1.5.6[/b] (release_1_5-15693)
 [*]Requires KCSE and the matching KCSE Address Library.
 [/list]
@@ -25,7 +26,7 @@ Stand on or near a suitable road and hold [b]E[/b]. Henry latches onto the path 
 
 [b]Subscribing alone is not enough.[/b]
 
-Steam downloads AutoWalk's data and localization files correctly, but KCSE does not search Steam Workshop content for native plugin DLLs. You must copy the AutoWalk DLL into KCSE's global plugin folder once after subscribing.
+Steam downloads the mod's data and localization files correctly, but KCSE does not search Steam Workshop content for native plugin DLLs. You must copy the mod's DLL into KCSE's global plugin folder once after subscribing.
 
 [h2]Requirements[/h2]
 [list]
@@ -33,16 +34,16 @@ Steam downloads AutoWalk's data and localization files correctly, but KCSE does 
 [*]A KCSE Address Library matching KCD2 1.5.6 / release_1_5-15693
 [/list]
 
-KCSE and the Address Library are separate dependencies and are not bundled with AutoWalk.
+KCSE and the Address Library are separate dependencies and are not bundled with this mod.
 
 [h2]Installation[/h2]
 [olist]
-[*]Subscribe to AutoWalk and allow Steam to finish downloading it.
+[*]Subscribe to the mod and allow Steam to finish downloading it.
 [*]Install KCSE by placing its [b]dinput8.dll[/b] in:
 [code]<KingdomComeDeliverance2>\Bin\Win64MasterMasterSteamPGO\dinput8.dll[/code]
 [*]Install the matching Address Library in:
 [code]<KingdomComeDeliverance2>\KCSE\addresslib\[/code]
-[*]Open AutoWalk's downloaded Workshop folder:
+[*]Open the downloaded Workshop folder:
 [code]<SteamLibrary>\steamapps\workshop\content\1771300\3815667754\[/code]
 [*]Copy this file:
 [code]KCSE\Plugins\KCD2_AutoWalk.dll[/code]
@@ -68,32 +69,33 @@ If the log reports [code]Total plugins found: 0[/code], the DLL is not in the co
 [list]
 [*][b]Hold E[/b]: engage or disengage road following when the prompt is available.
 [*][b]W/A/S/D[/b]: temporarily take over normal movement.
-[*][b]Release W/A/S/D[/b]: resume following if AutoWalk remains latched.
+[*][b]Release W/A/S/D[/b]: resume following if the road latch is still active.
+[*][b]Move the mouse[/b]: interrupt camera auto-centering; it resumes after a short idle delay.
 [*][b]Open a menu[/b]: suspend automatic forward input.
 [*][b]Close the menu[/b]: resume automatically.
 [/list]
 
 [h2]Unlimited Saving II compatibility[/h2]
 
-[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3443741661]Unlimited Saving II[/url] and AutoWalk both replace [code]Libs/Config/defaultProfile.xml[/code]. Using both without a compatibility patch causes one mod's input actions to override the other's.
+[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3443741661]Unlimited Saving II[/url] and this mod both replace [code]Libs/Config/defaultProfile.xml[/code]. Using both without a compatibility patch causes one mod's input actions to override the other's.
 
-If you use Unlimited Saving II, also install the optional [b]kcd_autowalk_usii_compat[/b] package from the AutoWalk project release. Keep both Workshop mods subscribed, then place the compatibility folder here:
+If you use Unlimited Saving II, also install the optional [b]kcd_autowalk_usii_compat[/b] package from the project release. Keep both Workshop mods subscribed, then place the compatibility folder here:
 [code]<KingdomComeDeliverance2>\Mods\kcd_autowalk_usii_compat\[/code]
 
 The compatibility patch is data-only and must load after both Workshop mods.
 
 [h2]Known limitations[/h2]
 [list]
-[*]The camera remains tied to Henry's travel heading while following. Mounted-style free camera behavior is not implemented yet.
+[*]Mounted-style free-look (view limits and hold-based decoupling) is not implemented; the camera auto-centers toward the travel direction instead.
 [*]The custom "Henry is not on suitable road" warning is currently English-only.
-[*]Game updates that change the input profile may require an updated AutoWalk package.
+[*]Game updates that change the input profile may require an updated package.
 [/list]
 
 [h2]Troubleshooting[/h2]
 [list]
 [*][b]Prompt appears but Henry does not follow:[/b] check KCSE.log. The native DLL probably did not load.
 [*][b]No prompt appears:[/b] confirm the Workshop item is subscribed and enabled, then verify the native DLL installation above.
-[*][b]F5 quicksave or AutoWalk stops working when both mods are enabled:[/b] install the Unlimited Saving II compatibility package.
+[*][b]F5 quicksave or the mod stops working when both mods are enabled:[/b] install the Unlimited Saving II compatibility package.
 [*][b]A mod is never mentioned in kcd.log:[/b] check for a Mods\mod_order.txt file that excludes it.
 [/list]
 

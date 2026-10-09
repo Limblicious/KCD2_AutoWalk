@@ -1,14 +1,15 @@
-# KCD2 AutoWalk
+# Dismounted path following
 
 Follow roads on foot in **Kingdom Come: Deliverance II**. Stand on a road, hold **E** like you would on horseback, and Henry latches onto the path and walks it by himself.
 
-AutoWalk is a native [KCSE](https://www.nexusmods.com/kingdomcomedeliverance2/mods/3332) plugin. It does not fake the road following with custom steering: it translates the game's own mounted road-magnetism controller onto Henry's on-foot locomotion, so the road choice, continuity, forks and backtracking behave like the vanilla horse feature.
+Dismounted path following is a native [KCSE](https://www.nexusmods.com/kingdomcomedeliverance2/mods/3332) plugin. It does not fake the road following with custom steering: it translates the game's own mounted road-magnetism controller onto Henry's on-foot locomotion, so the road choice, continuity, forks and backtracking behave like the vanilla horse feature.
 
 ## What it does
 
 - **Hold E** near a road to engage path following — the same prompt and latching feel as on horseback.
 - While following and **not touching WASD**, Henry walks the road automatically using the native road-follow logic.
 - Pressing **W/A/S/D** immediately hands control back to normal movement; the follow state survives like it does on horseback. Release the keys and Henry resumes if the road latch is still active.
+- While following with the mouse still, the camera **auto-centers toward Henry's direction of travel** (mounted-style recentering with the native timing); moving the mouse interrupts it immediately.
 - Opening any menu (ESC, inventory, map, perks, alchemy, ...) suspends the auto-input so menus never scroll on their own, and following resumes when you close them.
 - Henry shows a proper hint when he is not on a suitable road.
 - Normal walking, sprinting, stamina, combat and everything else are untouched. The mod only acts on foot.
@@ -48,13 +49,13 @@ Subscribing on the Steam Workshop delivers the mod's data and localization packs
 
 ### Unlimited Saving II compatibility
 
-[Unlimited Saving II](https://steamcommunity.com/sharedfiles/filedetails/?id=3443741661) and AutoWalk both replace `Libs/Config/defaultProfile.xml`, so installing both without a compatibility patch causes whichever loads first to lose its input actions. Build the optional merged patch with:
+[Unlimited Saving II](https://steamcommunity.com/sharedfiles/filedetails/?id=3443741661) and Dismounted path following both replace `Libs/Config/defaultProfile.xml`, so installing both without a compatibility patch causes whichever loads first to lose its input actions. Build the optional merged patch with:
 
 ```powershell
-.\scripts\package-usii-compat.ps1 -Configuration Release -Version 0.1.0
+.\scripts\package-usii-compat.ps1 -Configuration Release -Version 0.2.0
 ```
 
-Then copy `dist\kcd_autowalk_usii_compat` into the game's `Mods` folder alongside `kcd_autowalk`. Keep Unlimited Saving II subscribed. The compatibility mod is data-only and preserves the normal AutoWalk package unchanged.
+Then copy `dist\kcd_autowalk_usii_compat` into the game's `Mods` folder alongside `kcd_autowalk`. Keep Unlimited Saving II subscribed. The compatibility mod is data-only and preserves the normal Dismounted path following package unchanged.
 
 ## How to use
 
@@ -66,7 +67,7 @@ Then copy `dist\kcd_autowalk_usii_compat` into the game's `Mods` folder alongsid
 
 ## Known limitations
 
-- While following, the camera stays tied to Henry's travel heading. The mounted-style decoupled look (free camera like on horseback) is not implemented yet.
+- Mounted-style free-look (view limits, hold-based decoupling) is not implemented; the camera auto-centers toward Henry's travel after a short idle delay instead.
 - Henry's warning text ("Henry is not on suitable road") is localized in English; other languages show the vanilla text.
 - The hold-E prompt requires shipping full replacements of two vanilla input config files. A future game update that changes those files may require a mod update.
 - Unlimited Saving II requires the optional compatibility package described above because both mods replace the same input profile.
@@ -84,7 +85,7 @@ git clone https://github.com/Limblicious/KCD2_AutoWalk.git
 cd KCD2_AutoWalk
 .\scripts\bootstrap.ps1
 .\scripts\build.ps1 -Configuration Release
-.\scripts\package.ps1 -Configuration Release -Version 0.1.0
+.\scripts\package.ps1 -Configuration Release -Version 0.2.0
 ```
 
 `.\scripts\install.ps1 -Configuration Release` packages and installs into the local game `Mods` folder.

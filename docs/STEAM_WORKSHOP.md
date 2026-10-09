@@ -1,4 +1,4 @@
-# Steam Workshop — Release 0.1.0
+# Steam Workshop — Release 0.2.0
 
 Copy/paste-ready Steam BBCode: `docs/STEAM_WORKSHOP_DESCRIPTION.txt`
 
@@ -14,18 +14,18 @@ Official docs: Warhorse modding wiki — "Publishing a mod" (KM-A-58). The uploa
 
 ```text
 kcd_autowalk/
-├── mod.manifest          (0.1.0, supports 1.5.6*)
+├── mod.manifest          (0.2.0, supports 1.5.6*)
 ├── mod.cfg               (kcse_autowalk_debug 0)
 ├── data/AutoWalkData.pak
 ├── Localization/English_xml.pak
 └── KCSE/Plugins/KCD2_AutoWalk.dll
 ```
 
-Backup ZIP: `dist\KCD2_AutoWalk-0.1.0.zip`
+Backup ZIP: `dist\KCD2_AutoWalk-0.2.0.zip`
 
 ## Workshop item fields
 
-- **Title**: `AutoWalk — Follow Roads on Foot`
+- **Title**: `Dismounted path following`
 - **Mod folder**: `H:\VSCodeRepos\KCD2_AutoWalk\dist\kcd_autowalk`
 - **Cover image**: in-game screenshot (see below), <= 1 MB
 - **Visibility**: Hidden for the Workshop-only install test, Public only after confirmation
@@ -42,6 +42,8 @@ enjoy the scenery.
 
 - Hold E near a road to start following
 - W/A/S/D take over instantly — let go to resume
+- The camera auto-centers toward the travel direction after a short idle
+  delay; moving the mouse interrupts it
 - Menus pause and resume following automatically
 - Works only on foot; riding, sprinting and combat are untouched
 
@@ -58,14 +60,15 @@ Workshop item into KingdomComeDeliverance2/KCSE/Plugins. Do not duplicate the
 data PAKs under Mods.
 
 KNOWN LIMITATIONS
-- The camera stays tied to Henry's travel heading while following
+- Mounted-style free-look (view limits) is not implemented; the camera
+  auto-centers instead
 - The "not on suitable road" warning is English-only for now
-- Unlimited Saving II needs the optional AutoWalk compatibility package
+- Unlimited Saving II needs the optional compatibility package
 ```
 
 ### Unlimited Saving II
 
-Both mods replace `Libs/Config/defaultProfile.xml`. Users of Workshop item `3443741661` must also install `kcd_autowalk_usii_compat` from the compatibility ZIP alongside the main AutoWalk mod. The patch is data-only and restores both mods' input actions without bundling Unlimited Saving II.
+Both mods replace `Libs/Config/defaultProfile.xml`. Users of Workshop item `3443741661` must also install `kcd_autowalk_usii_compat` from the compatibility ZIP alongside the main Dismounted path following mod. The patch is data-only and restores both mods' input actions without bundling Unlimited Saving II.
 
 ## KCSE loader finding (verified against source)
 
