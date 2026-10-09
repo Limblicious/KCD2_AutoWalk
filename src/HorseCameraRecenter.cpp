@@ -178,6 +178,11 @@ void Update(wh::entitymodule::C_Player* player, float dt,
     // frame and stays idle for CameraCenteringTime before pulling. On foot,
     // the look input is recorded by NotifyMouseLook; the movement request's
     // computed turn terms are NOT user input and are ignored here.
+    // NOTE: StepTiming also advances g_centerBlend, but the blend no longer
+    // scales the pull (the proportional controller superseded the native
+    // blend ramp, per the requested feel): rotation begins at the
+    // proportional velocity as soon as the delay expires. The blend value
+    // is kept only as the delay-gate state.
     const float sinceLookSec =
         static_cast<float>(NowMs() - g_lastLookMs.load()) / 1000.0f;
     if (!StepTiming(centering, centeringTime, sinceLookSec, dt,

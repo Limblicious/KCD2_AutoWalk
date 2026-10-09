@@ -74,16 +74,19 @@ inline bool InsideDeadZone(const Ang3& error, float zone)
 
 // Proportional pull velocity toward the target: fast initial swing,
 // decelerating approach (exponential), continuous curve tracking, and a
-// gentle dead-zone edge (velocity -> 0 at the boundary, so no stepping).
-// gain must stay below the road-follow smoother's rate so its compensation
-// can keep up with the pull (runtime-established stability constraint).
+// dead-zone whose boundary velocity is continuous (the zone is subtracted
+// from the error, so the velocity approaches zero at the boundary instead
+// of jumping). gain must stay below the road-follow smoother's rate so its
+// compensation can keep up with the pull (runtime-established stability
+// constraint).
 inline float PullVelocity(float error, float gain, float maxRate,
                           float deadZone)
 {
-    if (std::abs(error) < deadZone) {
+    const float magnitude = std::abs(error) - deadZone;
+    if (magnitude <= 0.0f) {
         return 0.0f;
     }
-    const float v = error * gain;
+    const float v = (error < 0.0f ? -magnitude : magnitude) * gain;
     if (v > maxRate) {
         return maxRate;
     }

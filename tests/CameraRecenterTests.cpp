@@ -202,7 +202,9 @@ void TestDeadZone()
 }
 
 // 14. Proportional pull: fast initial velocity, decelerating approach,
-//     capped, and zero inside the dead-zone with a gentle edge.
+//     capped, and zero inside the dead-zone with a CONTINUOUS boundary
+//     (velocity approaches zero from both sides as the error nears the
+//     zone edge).
 void TestPullVelocity()
 {
     constexpr float kDegToRad = 0.01745329252f;
@@ -212,8 +214,29 @@ void TestPullVelocity()
 
     // Inside the dead-zone: no pull.
     CHECK(PullVelocity(0.5f * kDegToRad, gain, maxRate, deadZone) == 0.0f);
+    CHECK(PullVelocity(0.0f, gain, maxRate, deadZone) == 0.0f);
+    CHECK(PullVelocity(-0.5f * kDegToRad, gain, maxRate, deadZone) == 0.0f);
 
-    // Proportional: velocity scales with the error (decelerating approach).
+    // Boundary continuity, both directions: just below the edge -> 0; at
+    // the edge -> 0; just above -> proportional and small.
+    const float edge = deadZone;
+    CHECK(PullVelocity(edge * 0.999f, gain, maxRate, deadZone) == 0.0f);
+    CHECK(PullVelocity(-edge * 0.999f, gain, maxRate, deadZone) == 0.0f);
+    CHECK(PullVelocity(edge, gain, maxRate, deadZone) == 0.0f);
+    CHECK(PullVelocity(-edge, gain, maxRate, deadZone) == 0.0f);
+    const float justAbove =
+        PullVelocity(edge * 1.01f, gain, maxRate, deadZone);
+    const float justAboveNeg =
+        PullVelocity(-edge * 1.01f, gain, maxRate, deadZone);
+    CHECK(justAbove > 0.0f);
+    CHECK(justAboveNeg < 0.0f);
+    // The velocity at 1% beyond the edge is proportional to the 1%
+    // overshoot, not the full edge: |v| = gain * 0.01 * edge.
+    CHECK(std::abs(justAbove - gain * 0.01f * edge) < 1.0e-6f);
+    CHECK(std::abs(justAboveNeg + gain * 0.01f * edge) < 1.0e-6f);
+
+    // Proportional: velocity scales with the error beyond the zone
+    // (decelerating approach).
     const float v1 = PullVelocity(20.0f * kDegToRad, gain, maxRate, deadZone);
     const float v2 = PullVelocity(40.0f * kDegToRad, gain, maxRate, deadZone);
     CHECK(v2 > v1);
@@ -224,13 +247,6 @@ void TestPullVelocity()
           1.0e-6f);
     CHECK(std::abs(PullVelocity(-2.0f, gain, maxRate, deadZone) + maxRate) <
           1.0e-6f);
-
-    // The boundary velocity is continuous: just outside the zone the pull
-    // is proportional and small, so curve tracking has no step.
-    const float justOutside =
-        PullVelocity(deadZone * 1.01f, gain, maxRate, deadZone);
-    CHECK(justOutside > 0.0f);
-    CHECK(justOutside < 0.1f);
 }
 
 } // namespace

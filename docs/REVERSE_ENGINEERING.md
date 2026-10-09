@@ -571,14 +571,18 @@ pipeline is **flat-yaw-relative**, not world-space:
 - **Proportional pull (2026-10-10, requested feel)**: the constant-rate cap
   and the 2-deg dead-zone produced a slow linear swing and a visible step
   when the target moved through curves. The pull is now a proportional
-  velocity controller (`PullVelocity`): `velocity = error * gain`, capped,
-  with a 0.75-deg dead-zone whose boundary velocity is continuous. gain and
-  the cap are fractions of the native road-follow smoother rate
-  (`rotationMax`), keeping the pull below the compensation rate (the
-  runtime-established stability constraint). This replaces the ported
-  blend-stage ramp: fast initial swing, decelerating exponential approach,
-  and continuous curve tracking. The blend/CameraCentering rate remain in
-  use for the restart delay only.
+  velocity controller (`PullVelocity`):
+  `velocity = sign(e) * min(gain * max(|e| - d, 0), maxRate)` -- the
+  dead-zone d (0.75 deg) is subtracted from the error so the velocity
+  approaches zero continuously at the boundary (2026-10-10 review
+  correction). gain and the cap are fractions of the native road-follow
+  smoother rate (`rotationMax`), keeping the pull below the compensation
+  rate (the runtime-established stability constraint). The native blend
+  ramp is intentionally bypassed: rotation begins at the proportional
+  velocity when the CameraCenteringTime delay expires; `g_centerBlend`
+  remains only as the delay-gate state and no longer scales the pull.
+  Startup behavior is therefore a faster swing than the mounted algorithm,
+  per the requested feel.
 
 #### Input-listener registration (2026-10-09 fix)
 `EnsureInputListener()` was previously reachable only through
