@@ -199,6 +199,19 @@ void Update(wh::entitymodule::C_Player* player, float dt,
     // an uncapped full-error pull stacks into a spin (runtime-observed).
     Ang3 delta = RecenterDelta(current, desired, g_centerBlend);
     delta = ClampDeltaStep(delta, centering * dt);
+
+    // Small-error dead-zone: the coupled-frame limit cycle (camera bobble ->
+    // flat -> sampler normalization -> travel smoother -> target) sustains a
+    // couple-of-degrees oscillation; stop pulling inside the zone so the
+    // loop settles.
+    if (InsideDeadZone(RecenterDelta(current, desired, 1.0f),
+                       2.0f * kDegToRad)) {
+        LogState("settled", lookPitch, lookYaw, g_centerBlend, focusFlags,
+                 centering, centeringTime, Ang3(current).z,
+                 state->m_lookAngleAccum.z, targetWorldYaw, gt);
+        return;
+    }
+
     state->m_lookAngleAccum += delta;
 
     const Ang3 curAngles = Ang3(current);

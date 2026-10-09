@@ -562,6 +562,12 @@ pipeline is **flat-yaw-relative**, not world-space:
   compensation rate so the loop converges monotonically. The omitted native
   heading SmoothCD stage remains approximated by this cap, not by the
   verbatim stage.
+- **Dead-zone (2026-10-10, runtime-required)**: with the rate cap the loop
+  converged but sustained a ~1-2 deg limit cycle (camera bobble -> flat ->
+  sampler facing-normalization -> travel smoother with its native sign-flip
+  reset -> target bobble). The port skips the pull while the remaining error
+  is below 2 deg (`InsideDeadZone`), letting the coupled loop settle. The
+  native needs no zone because its target is view-independent.
 
 #### Input-listener registration (2026-10-09 fix)
 `EnsureInputListener()` was previously reachable only through

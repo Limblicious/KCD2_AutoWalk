@@ -59,4 +59,17 @@ inline Ang3 ClampDeltaStep(const Ang3& delta, float maxStep)
     return delta;
 }
 
+// Dead-zone on the remaining error. On foot the flat yaw follows the view,
+// so a small camera bobble propagates through the sampler's facing
+// normalization and the travel smoother (with its native sign-flip reset)
+// back into the target -- a self-sustained limit cycle of a couple of
+// degrees (runtime-observed). Below the zone the pull is skipped so the
+// coupled loop settles. The native needs no zone because its target is
+// view-independent.
+inline bool InsideDeadZone(const Ang3& error, float zone)
+{
+    return std::abs(error.x) < zone && std::abs(error.y) < zone &&
+           std::abs(error.z) < zone;
+}
+
 } // namespace AutoWalk::HorseCameraRecenter

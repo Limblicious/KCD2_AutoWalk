@@ -189,6 +189,18 @@ void TestDeltaStepClamp()
     }
 }
 
+// 13. The coupled-frame limit cycle is suppressed by the dead-zone: errors
+//     below the zone produce no pull, errors above do.
+void TestDeadZone()
+{
+    constexpr float kDegToRad = 0.01745329252f;
+    const float zone = 2.0f * kDegToRad;
+    CHECK(InsideDeadZone(Ang3(0.5f * kDegToRad, 0.0f, 0.0f), zone));
+    CHECK(InsideDeadZone(Ang3(0.0f, 0.0f, 1.9f * kDegToRad), zone));
+    CHECK(!InsideDeadZone(Ang3(0.0f, 0.0f, 2.1f * kDegToRad), zone));
+    CHECK(!InsideDeadZone(Ang3(2.1f * kDegToRad, 0.0f, 0.0f), zone));
+}
+
 } // namespace
 
 int main()
@@ -205,6 +217,7 @@ int main()
     TestTargetCompositionFromRuntimeSamples();
     TestWrapPi();
     TestDeltaStepClamp();
+    TestDeadZone();
 
     std::printf("CameraRecenterTests: %d checks, %d failures\n", g_checks,
                 g_failures);
