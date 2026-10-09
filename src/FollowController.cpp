@@ -64,6 +64,22 @@ float g_lastPosY = 0.0f;
 float g_lastPosZ = 0.0f;
 bool g_lastPosValid = false;
 
+// Rolling position history (~1 s at 60 Hz) for the ground-relative
+// displacement heading over ~0.5 s, immune to per-frame noise.
+constexpr int kPosWindowSize = 60;
+constexpr int kPosWindowSpan = 30;
+float g_posWinX[kPosWindowSize] = {};
+float g_posWinY[kPosWindowSize] = {};
+int g_posWinCount = 0;
+int g_posWinHead = 0;
+
+void ResetPositionHistory()
+{
+    g_lastPosValid = false;
+    g_posWinCount = 0;
+    g_posWinHead = 0;
+}
+
 // The engine's current view camera matrix (CSystem+0x288 CCamera): the
 // ACTUAL displayed camera orientation, independent of the view state.
 float ReadCameraYaw()
@@ -99,17 +115,19 @@ void MovementRequestHook(void* self, float dt, float* out)
     out[3] = -std::sin(yaw) * speed;
     out[4] = std::cos(yaw) * speed;
     if (g_cameraRecenteringEnabled.load()) {
-        // Ground truth for the centering-frame diagnostics: Henry's body
-        // orientation, his ACTUAL displacement direction between frames,
-        // and the displayed camera orientation.
-        float bodyYaw = yaw;
-        float moveYaw = yaw;
-        bool moveValid = false;
+        // Reference-frame ground truth for the double-rotation experiment.
+        // Diagnostics only: nothing here feeds the camera or movement math.
+        HorseCameraRecenter::GroundTruth gt;
+        gt.travelYaw = yaw;
+        gt.requestYaw = yaw; // the override sets the request exactly to travel
+        gt.vanillaRequestYaw = std::atan2(-x, y);
+        gt.dt = dt;
+        gt.entityYaw = yaw;
         auto* framework = CCryAction::GetInstance();
         if (auto* entity = framework ? framework->GetClientEntity() : nullptr) {
             const auto* tm = reinterpret_cast<const float*>(
                 reinterpret_cast<std::uintptr_t>(entity) + 0x58);
-            bodyYaw = std::atan2(-tm[1], tm[5]);
+            gt.entityYaw = std::atan2(-tm[1], tm[5]);
             const float px = tm[3];
             const float py = tm[7];
             const float pz = tm[11];
@@ -117,24 +135,46 @@ void MovementRequestHook(void* self, float dt, float* out)
                 const float dx = px - g_lastPosX;
                 const float dy = py - g_lastPosY;
                 const float distSq = dx * dx + dy * dy;
+                gt.dx = dx;
+                gt.dy = dy;
                 // A frame step below the noise floor cannot be measured;
                 // a step above 3 m is a teleport/load, not travel.
                 if (distSq > 1.0e-6f && distSq < 9.0f) {
-                    moveYaw = std::atan2(-dx, dy);
-                    moveValid = true;
+                    gt.moveYaw = std::atan2(-dx, dy);
+                    gt.moveValid = true;
                 }
             }
             g_lastPosX = px;
             g_lastPosY = py;
             g_lastPosZ = pz;
             g_lastPosValid = true;
+
+            g_posWinX[g_posWinHead] = px;
+            g_posWinY[g_posWinHead] = py;
+            g_posWinHead = (g_posWinHead + 1) % kPosWindowSize;
+            if (g_posWinCount < kPosWindowSize) {
+                ++g_posWinCount;
+            }
+            if (g_posWinCount >= kPosWindowSpan) {
+                const int oldest =
+                    (g_posWinHead + kPosWindowSize - kPosWindowSpan) %
+                    kPosWindowSize;
+                const float wx = px - g_posWinX[oldest];
+                const float wy = py - g_posWinY[oldest];
+                if (wx * wx + wy * wy > 1.0e-4f) {
+                    gt.windowYaw = std::atan2(-wx, wy);
+                    gt.windowValid = true;
+                }
+            }
         }
+        if (player->m_pPhysicsState) {
+            gt.flatYaw = player->m_pPhysicsState->m_flatYaw;
+        }
+        gt.cameraYaw = ReadCameraYaw();
         // S_MountAnimState+0x18 is the Ang3 look request copied into
         // C_ActorPhysicsState::m_lookDeltaRequest by the immediately
         // following native physics-state tick.
-        HorseCameraRecenter::Update(player, yaw, dt, out[6], out[8],
-                                    bodyYaw, moveYaw, moveValid,
-                                    ReadCameraYaw());
+        HorseCameraRecenter::Update(player, dt, out[6], out[8], gt);
     }
     // NOTE: m_rootRotation (out+0x3C) is NOT overwritten here -- its exact
     // role is still "MED"-unverified (quat vs look/aim data), and writing it
@@ -210,7 +250,7 @@ void ResetTravelFrame()
     // The position history is only valid within one continuous follow
     // session; stale deltas across a teleport/load would otherwise be
     // reported as travel.
-    g_lastPosValid = false;
+    ResetPositionHistory();
 }
 
 // User-input signals gathered by the input listener each frame.
@@ -653,7 +693,7 @@ void Enable()
     g_followActive.store(false);
     g_cameraRecenteringEnabled.store(false);
     HorseCameraRecenter::Reset();
-    g_lastPosValid = false;
+    ResetPositionHistory();
     RoadFollowPort::SetActionActive(true);
     Log::Write("[AutoWalk] FollowController: enabled (mode-1 engage).");
 }

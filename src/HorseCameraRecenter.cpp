@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <string>
 
 #include "CameraRecenterMath.h"
@@ -17,6 +18,7 @@ namespace AutoWalk::HorseCameraRecenter {
 namespace {
 
 constexpr float kDegToRad = 0.01745329252f;
+constexpr float kRadToDeg = 57.295779513f;
 float g_centerBlend = 0.0f;
 std::atomic<long long> g_lastLookMs{0};
 std::atomic<long long> g_lookEvents{0};
@@ -31,34 +33,72 @@ long long NowMs()
         .count();
 }
 
+float WrapPi(float a)
+{
+    while (a > 3.14159265f) a -= 6.28318531f;
+    while (a < -3.14159265f) a += 6.28318531f;
+    return a;
+}
+
+// Signed angular error in degrees of one reference-frame prediction against
+// the measured displacement heading; "n/a" when no measurement exists.
+std::string ErrStr(float predicted, float measured, bool have)
+{
+    if (!have) {
+        return "n/a";
+    }
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.2f",
+                  WrapPi(predicted - measured) * kRadToDeg);
+    return buf;
+}
+
 void LogState(std::string_view gate, float lookPitch, float lookYaw,
-              float blend, uint32_t focusFlags, float travelYaw,
-              float viewZ, float accumZ, float centering, float centeringTime,
-              float bodyYaw, float moveYaw, bool moveValid, float cameraYaw)
+              float blend, uint32_t focusFlags, float centering,
+              float centeringTime, float viewYaw, float accumZ,
+              const GroundTruth& gt)
 {
     const auto now = std::chrono::steady_clock::now();
     if (g_lastLog != std::chrono::steady_clock::time_point{} &&
-        now - g_lastLog < std::chrono::seconds(2)) {
+        now - g_lastLog < std::chrono::seconds(1)) {
         return;
     }
     g_lastLog = now;
-    const std::string move = moveValid ? std::to_string(moveYaw) : "n/a";
+
+    const bool have = gt.moveValid || gt.windowValid;
+    const float measured = gt.windowValid ? gt.windowYaw : gt.moveYaw;
+    const std::string src =
+        gt.windowValid ? "win" : (gt.moveValid ? "frame" : "none");
+
     Log::Write(std::string("[AutoWalk] camera: gate=") + std::string(gate) +
-               " lookPitch=" + std::to_string(lookPitch) +
-               " lookYaw=" + std::to_string(lookYaw) +
                " blend=" + std::to_string(blend) +
                " focusFlags=" + std::to_string(focusFlags) +
                " centering=" + std::to_string(centering) +
                " centeringTime=" + std::to_string(centeringTime) +
-               " sinceLookMs=" +
-               std::to_string(NowMs() - g_lastLookMs.load()) +
+               " sinceLookMs=" + std::to_string(NowMs() - g_lastLookMs.load()) +
                " lookEvents=" + std::to_string(g_lookEvents.load()) +
-               " travel=" + std::to_string(travelYaw) +
-               " viewZ=" + std::to_string(viewZ) +
-               " accumZ=" + std::to_string(accumZ) +
-               " body=" + std::to_string(bodyYaw) +
-               " move=" + move +
-               " cam=" + std::to_string(cameraYaw));
+               " travel=" + std::to_string(gt.travelYaw) +
+               " req=" + std::to_string(gt.requestYaw) +
+               " reqVanilla=" + std::to_string(gt.vanillaRequestYaw) +
+               " flat=" + std::to_string(gt.flatYaw) +
+               " view=" + std::to_string(viewYaw) +
+               " ent=" + std::to_string(gt.entityYaw) +
+               " cam=" + std::to_string(gt.cameraYaw) +
+               " move=" + (gt.moveValid ? std::to_string(gt.moveYaw) : "n/a") +
+               " moveWin=" +
+               (gt.windowValid ? std::to_string(gt.windowYaw) : "n/a") +
+               " dxy=" + std::to_string(gt.dx) + "," + std::to_string(gt.dy) +
+               " dt=" + std::to_string(gt.dt) +
+               " measSrc=" + src +
+               " errA=" + ErrStr(gt.travelYaw, measured, have) +
+               " errB=" +
+               ErrStr(WrapPi(gt.flatYaw + gt.requestYaw), measured, have) +
+               " errC=" +
+               ErrStr(WrapPi(gt.entityYaw + gt.requestYaw), measured, have) +
+               " errD=" +
+               ErrStr(WrapPi(viewYaw + gt.requestYaw), measured, have) +
+               " errE=" +
+               ErrStr(WrapPi(gt.cameraYaw + gt.requestYaw), measured, have));
 }
 
 } // namespace
@@ -79,23 +119,19 @@ void NotifyMouseLook()
     g_lookEvents.fetch_add(1);
 }
 
-void Update(wh::entitymodule::C_Player* player, float travelYaw, float dt,
-            float lookPitch, float lookYaw,
-            float bodyYaw, float moveYaw, bool moveValid, float cameraYaw)
+void Update(wh::entitymodule::C_Player* player, float dt,
+            float lookPitch, float lookYaw, const GroundTruth& gt)
 {
     const NativeMagnetism::FrameCVars* cvars = nullptr;
     const bool cvarsOk = NativeMagnetism::RefreshFrameCVars(cvars) && cvars;
-    const float centering =
-        cvarsOk ? cvars->cameraCentering : -1.0f;
-    const float centeringTime =
-        cvarsOk ? cvars->cameraCenteringTime : 0.0f;
+    const float centering = cvarsOk ? cvars->cameraCentering : -1.0f;
+    const float centeringTime = cvarsOk ? cvars->cameraCenteringTime : 0.0f;
     const uint32_t focusFlags =
         player && player->m_pFocusCamera ? player->m_pFocusCamera->m_flags : 0;
 
     if (!player || !player->m_pPhysicsState || !cvarsOk || centering < 0.0f) {
         LogState("cvars", lookPitch, lookYaw, g_centerBlend, focusFlags,
-                 travelYaw, 0.0f, 0.0f, centering, centeringTime,
-                 bodyYaw, moveYaw, moveValid, cameraYaw);
+                 centering, centeringTime, 0.0f, 0.0f, gt);
         Reset();
         return;
     }
@@ -104,8 +140,7 @@ void Update(wh::entitymodule::C_Player* player, float travelYaw, float dt,
     // could never be interrupted by the player.
     if (!g_lookMonitoring.load()) {
         LogState("monitor", lookPitch, lookYaw, g_centerBlend, focusFlags,
-                 travelYaw, 0.0f, 0.0f, centering, centeringTime,
-                 bodyYaw, moveYaw, moveValid, cameraYaw);
+                 centering, centeringTime, 0.0f, 0.0f, gt);
         Reset();
         return;
     }
@@ -113,8 +148,7 @@ void Update(wh::entitymodule::C_Player* player, float travelYaw, float dt,
     // The native mounted routine yields while C_FocusCamera owns the view.
     if (player->m_pFocusCamera && (focusFlags & 0x02U) != 0) {
         LogState("focus", lookPitch, lookYaw, g_centerBlend, focusFlags,
-                 travelYaw, 0.0f, 0.0f, centering, centeringTime,
-                 bodyYaw, moveYaw, moveValid, cameraYaw);
+                 centering, centeringTime, 0.0f, 0.0f, gt);
         Reset();
         return;
     }
@@ -128,15 +162,14 @@ void Update(wh::entitymodule::C_Player* player, float travelYaw, float dt,
     if (!StepTiming(centering, centeringTime, sinceLookSec, dt,
                     g_centerBlend)) {
         LogState("delay", lookPitch, lookYaw, g_centerBlend, focusFlags,
-                 travelYaw, 0.0f, 0.0f, centering, centeringTime,
-                 bodyYaw, moveYaw, moveValid, cameraYaw);
+                 centering, centeringTime, 0.0f, 0.0f, gt);
         return;
     }
 
     auto* state = player->m_pPhysicsState;
     const Quat current = state->m_viewRotation;
     const float pitch = cvars->cameraCenteringPitchOffset * kDegToRad;
-    const Quat desired = RecenterTarget(travelYaw, pitch);
+    const Quat desired = RecenterTarget(gt.travelYaw, pitch);
 
     // REL 56442 computes inverse(currentView) * slerp(currentView, target,
     // blend), converts to Euler, and adds all three components to the
@@ -145,8 +178,8 @@ void Update(wh::entitymodule::C_Player* player, float travelYaw, float dt,
 
     const Ang3 curAngles = Ang3(current);
     LogState("apply", lookPitch, lookYaw, g_centerBlend, focusFlags,
-             travelYaw, curAngles.z, state->m_lookAngleAccum.z, centering,
-             centeringTime, bodyYaw, moveYaw, moveValid, cameraYaw);
+             centering, centeringTime, curAngles.z,
+             state->m_lookAngleAccum.z, gt);
 }
 
 } // namespace AutoWalk::HorseCameraRecenter

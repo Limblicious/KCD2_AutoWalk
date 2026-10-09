@@ -87,6 +87,7 @@ Mounted-style recenter milestone:
   travel heading using the native `CameraCentering` rate and pitch offset;
 - follow a long curve and verify the recenter target tracks travel without
   oscillation, snapping, or feeding back into steering;
+- verify no forced camera whipping;
 - open ESC, inventory, map, and another full-UI screen while offset from the
   travel heading; verify no camera delta is applied in UI and resume starts a
   fresh blend from the current view;
@@ -101,11 +102,39 @@ Separate target-relative view-limit gate:
 
 - apply the same mounted view-limit semantics;
 - verify free-look while Henry turns;
-- verify no forced camera whipping;
 - verify no unrestricted 360 spin;
 - verify clean restoration outside AutoWalk.
 
 Use internal-state comparison where possible rather than estimating limits from recordings.
+
+## 6b. Double-rotation experiment (movement request coordinate space)
+
+Runtime data showed the measured displacement heading ≈ 2 × travelYaw while
+the recenter locks the view. Candidate explanation: the movement consumer
+applies the request velocity in a frame rotated by the reference yaw
+(flat/entity/view/camera). The camera log now records, every ~1 s:
+
+`travel` (commanded), `req` (request direction after override),
+`reqVanilla` (before override), `flat` (C_ActorPhysicsState+0x44),
+`view`, `ent` (entity world-TM), `cam` (rendered camera), `move`
+(consecutive frame), `moveWin` (rolling ~0.5 s), raw `dxy`, `dt`,
+`measSrc`, and signed error predictions in degrees:
+
+- A: `move ≈ travelYaw`
+- B: `move ≈ flatYaw + requestYaw`
+- C: `move ≈ entityYaw + requestYaw`
+- D: `move ≈ viewYaw + requestYaw`
+- E: `move ≈ cameraYaw + requestYaw`
+
+Three conditions:
+
+1. straight road, camera fully recentered;
+2. straight road, holding the view ~90° off the travel direction;
+3. curved road, no mouse input.
+
+Pass criterion: one prediction consistently near 0° error in all three
+conditions; the others diverge when the view is turned away. Do not change
+the movement vector until the consumer's coordinate space is confirmed.
 
 ## 7. Manual WASD handoff
 
